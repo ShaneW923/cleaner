@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeTheme, nativeImage } = require('electron');
 const path = require('node:path');
 const { scanCaches, trashCaches } = require('./scanner');
 
@@ -7,11 +7,15 @@ let currentScan = null;
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 900,
-    height: 680,
-    minWidth: 640,
-    minHeight: 480,
+    width: 1180,
+    height: 760,
+    minWidth: 860,
+    minHeight: 540,
     title: 'Cleaner',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 13 },
+    // Match the CSS background so there's no white flash on launch
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1b19' : '#ece6da',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -27,11 +31,17 @@ async function appIcon(appPath) {
   if (!appPath) return null;
   if (iconCache.has(appPath)) return iconCache.get(appPath);
   let url = null;
+  // app.getFileIcon returns a generic placeholder for most .app bundles on
+  // recent macOS; QuickLook thumbnails give the real icon.
   try {
-    const img = await app.getFileIcon(appPath, { size: 'normal' });
-    url = img.isEmpty() ? null : img.toDataURL();
-  } catch {
-    url = null;
+    const img = await nativeImage.createThumbnailFromPath(appPath, { width: 64, height: 64 });
+    if (!img.isEmpty()) url = img.toDataURL();
+  } catch {}
+  if (!url) {
+    try {
+      const img = await app.getFileIcon(appPath, { size: 'normal' });
+      if (!img.isEmpty()) url = img.toDataURL();
+    } catch {}
   }
   iconCache.set(appPath, url);
   return url;
@@ -63,6 +73,16 @@ ipcMain.handle('scan:cancel', () => {
 ipcMain.handle('trash', (_e, paths) => trashCaches(paths, (p) => shell.trashItem(p)));
 
 ipcMain.handle('reveal', (_e, p) => shell.showItemInFolder(p));
+
+// Free / total space on the startup disk.
+ipcMain.handle('disk', async () => {
+  try {
+    const s = await require('node:fs/promises').statfs('/');
+    return { free: s.bavail * s.bsize, total: s.blocks * s.bsize };
+  } catch {
+    return null;
+  }
+});
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());

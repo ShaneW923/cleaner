@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { buildAppIndex, matchApp, runningAppPaths } = require('./apps');
-const { advise, isSystem } = require('./advisor');
+const { advise, isSystem, TOOLS } = require('./advisor');
 
 // Which file's Finder icon to show for each kind of row.
 const ICONS = {
@@ -64,7 +64,8 @@ function scanCaches({ onItem, onProgress }) {
         const { bytes, partial } = await folderSize(full, procs);
         if (cancelled) return;
         finished++;
-        const app = matchApp(entry.name, index);
+        // Known dev tools are never attributed to an app
+        const app = TOOLS[entry.name.toLowerCase()] ? null : matchApp(entry.name, index);
         const base = {
           id: entry.name,
           path: full,

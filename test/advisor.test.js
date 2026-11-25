@@ -42,4 +42,6 @@ test('matches Codex to ChatGPT.app and LarkShell to Lark', () => {
   assert.strictEqual(matchApp('Codex', index), chatgpt);
   assert.strictEqual(matchApp('LarkShell', index), lark);
   assert.strictEqual(matchApp('Archive', index), null); // "Arc" is too short for prefix matching
+  addApp(index, { name: 'Home', bundleId: 'com.apple.Home', path: '/System/Applications/Home.app' });
+  assert.strictEqual(matchApp('Homebrew', index), null); // "brew" isn't a new word
 });

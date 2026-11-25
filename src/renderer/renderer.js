@@ -6,200 +6,333 @@ if (!window.cleaner) {
     '<p style="padding:40px;text-align:center">这是界面预览，不能扫描。请在项目里运行 <code>npm start</code> 打开 App。</p>';
   throw new Error('window.cleaner missing: not running inside Electron');
 }
-const items = new Map(); // id → item
-const selected = new Set();
-let sortKey = 'bytes';
-let scanning = false;
 
-function fmt(bytes) {
+const SVGNS = 'http://www.w3.org/2000/svg';
+const MAX_STONES = 28;
+const LEVELS = [
+  { key: 'recommend', title: '推荐清理', open: true, selectAll: true },
+  { key: 'ok', title: '可以清理', open: true, selectAll: true },
+  { key: 'keep', title: '不建议', open: false, selectAll: false },
+];
+
+const state = {
+  items: new Map(),   // id → item (item.trashed once moved to Trash)
+  selected: new Set(),
+  open: Object.fromEntries(LEVELS.map((l) => [l.key, l.open])),
+  scanning: false,
+  scanned: false,
+  progress: { done: 0, total: 0, current: '' },
+  disk: null,
+  freedThisSession: 0,
+  seenStones: new Set(),
+  hot: null,
+};
+
+// ---------- formatting ----------
+function split(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
   while (bytes >= 1000 && i < units.length - 1) { bytes /= 1000; i++; }
-  return `${bytes.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  const num = i === 0 ? String(Math.round(bytes)) : bytes >= 100 ? bytes.toFixed(0) : bytes.toFixed(1);
+  return [num, units[i]];
+}
+const fmt = (b) => split(b).join(' ');
+const label = (it) => it.displayName || it.appName || it.folder;
+const live = () => [...state.items.values()].filter((i) => !i.trashed);
+const sum = (arr) => arr.reduce((s, i) => s + i.bytes, 0);
+
+// ---------- render: hero ----------
+function renderHero() {
+  const all = live();
+  const rec = all.filter((i) => i.level === 'recommend');
+  let big = null, caption, summary = '';
+
+  if (state.scanning) {
+    big = sum(all);
+    const { done, total, current } = state.progress;
+    caption = total ? `正在扫描 ${done}/${total} · ${current}` : '正在准备…';
+  } else if (!state.scanned) {
+    caption = '扫描缓存，看看哪些能放心清理';
+  } else {
+    big = sum(rec);
+    caption = `推荐清理 · 缓存共 ${fmt(sum(all))}` + (state.disk ? ` · 磁盘可用 ${fmt(state.disk.free)}` : '');
+    summary = state.freedThisSession
+      ? `已释放 ${fmt(state.freedThisSession)}，在废纸篓里，清空后才真正腾出空间。`
+      : rec.length
+        ? `可以清理 ${fmt(sum(all.filter((i) => i.level !== 'keep')))}，其中 ${fmt(sum(rec))} 可以放心删除。`
+        : '没有推荐清理的内容。';
+  }
+
+  if (big === null) { $('bigNum').textContent = '—'; $('bigUnit').textContent = ''; }
+  else { const [n, u] = split(big); $('bigNum').textContent = n; $('bigUnit').textContent = u; }
+  $('bigCaption').textContent = caption;
+  $('summary').textContent = summary;
+  $('progressLine').hidden = !state.scanning;
+  const { done, total } = state.progress;
+  $('progressBar').style.width = total ? `${(done / total) * 100}%` : '0';
 }
 
-function sorted() {
-  const arr = [...items.values()];
-  if (sortKey === 'bytes') arr.sort((a, b) => b.bytes - a.bytes);
-  else arr.sort((a, b) => label(a).localeCompare(label(b)));
-  return arr;
-}
+// ---------- render: grouped list ----------
+function renderGroups() {
+  const box = $('groups');
+  box.replaceChildren();
+  for (const lvl of LEVELS) {
+    const list = live().filter((i) => i.level === lvl.key).sort((a, b) => b.bytes - a.bytes);
+    if (!list.length) continue;
+    const sel = list.filter((i) => state.selected.has(i.id));
 
-function label(it) {
-  return it.displayName || it.appName || it.folder;
-}
+    const g = el('div', 'group');
+    const head = el('div', 'group-head');
+    const fold = el('button', 'fold', state.open[lvl.key] ? '▾' : '▸');
+    fold.onclick = () => { state.open[lvl.key] = !state.open[lvl.key]; renderGroups(); };
+    head.append(fold, el('span', `dot ${lvl.key}`), el('span', 'title', lvl.title));
+    head.append(el('span', 'meta', sel.length ? `已选 ${fmt(sum(sel))} / ${fmt(sum(list))}` : `${list.length} 项 · ${fmt(sum(list))}`));
+    if (lvl.selectAll) {
+      const allOn = sel.length === list.length;
+      const t = el('button', 'toggle', allOn ? '全不选' : '全选');
+      t.onclick = () => { list.forEach((i) => (allOn ? state.selected.delete(i.id) : state.selected.add(i.id))); renderAll(); };
+      head.append(t);
+    }
+    g.append(head);
 
-const LEVEL_TEXT = { recommend: '推荐清理', ok: '可以清理', keep: '不建议' };
-const KIND_TEXT = { tool: '开发工具', system: 'macOS 系统', orphan: '未找到 App' };
-
-function render() {
-  const list = $('list');
-  list.replaceChildren(...sorted().map(row));
-  $('empty').hidden = scanning || items.size > 0 || $('status').dataset.scanned !== '1';
-  updateFooter();
+    if (state.open[lvl.key]) {
+      const ul = el('ul', 'rows');
+      for (const it of list) ul.append(row(it));
+      g.append(ul);
+    }
+    box.append(g);
+  }
 }
 
 function row(it) {
-  const li = document.createElement('li');
+  const li = el('li', 'row');
+  li.dataset.id = it.id;
+  if (state.hot === it.id) li.classList.add('hot');
+  li.title = it.path;
 
-  const cb = document.createElement('input');
+  const cb = el('input', 'check');
   cb.type = 'checkbox';
-  cb.checked = selected.has(it.id);
-  cb.onchange = () => { cb.checked ? selected.add(it.id) : selected.delete(it.id); updateFooter(); };
+  cb.checked = state.selected.has(it.id);
+  cb.onchange = () => toggle(it.id);
 
-  let icon;
-  if (it.icon) { icon = document.createElement('img'); icon.src = it.icon; }
-  else { icon = document.createElement('div'); icon.className = 'noicon'; }
+  const icon = it.icon ? Object.assign(el('img'), { src: it.icon }) : el('span');
 
-  const name = document.createElement('div');
-  name.className = 'name';
-  const title = document.createElement('div');
-  title.className = 'title';
-  title.textContent = label(it);
-  title.append(tag(LEVEL_TEXT[it.level], it.level));
-  if (KIND_TEXT[it.kind]) title.append(tag(KIND_TEXT[it.kind], ''));
-  if (it.appRunning) title.append(tag('运行中', 'running'));
-  if (it.partial) title.append(tag('部分无权限', ''));
-  const reason = document.createElement('div');
-  reason.className = 'reason';
-  reason.textContent = it.reason;
-  const sub = document.createElement('div');
-  sub.className = 'sub';
-  sub.textContent = it.folder;
-  sub.title = it.path;
-  name.append(title, reason, sub);
+  const name = el('div', 'name');
+  const t = el('div', 't', label(it));
+  if (it.appRunning) t.append(el('span', 'badge', '运行中'));
+  if (it.kind === 'orphan') t.append(el('span', 'badge', '未找到 App'));
+  if (it.partial) t.append(el('span', 'badge', '部分无权限'));
+  name.append(t, el('div', 'r', it.reason));
 
-  const size = document.createElement('div');
-  size.className = 'size';
-  size.textContent = fmt(it.bytes);
-
-  const reveal = document.createElement('button');
-  reveal.className = 'reveal';
-  reveal.textContent = '在访达中显示';
-  reveal.onclick = () => window.cleaner.reveal(it.path);
-
-  li.append(cb, icon, name, size, reveal);
+  li.append(cb, icon, name, el('span', 'size', fmt(it.bytes)));
+  li.onmouseenter = () => setHot(it.id);
+  li.onmouseleave = () => setHot(null);
+  li.ondblclick = () => window.cleaner.reveal(it.path);
   return li;
 }
 
-function tag(text, cls) {
-  const s = document.createElement('span');
-  s.className = `tag ${cls}`;
-  s.textContent = text;
-  return s;
+// ---------- render: stone garden ----------
+function renderGarden() {
+  const svg = $('map');
+  const { width, height } = svg.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  $('emptyGarden').hidden = state.items.size > 0;
+  if (!state.items.size || width < 10) return;
+
+  // Biggest folders get their own stone; the rest gather into one "其他" stone per level.
+  const all = [...state.items.values()].sort((a, b) => b.bytes - a.bytes);
+  const nodes = all.slice(0, MAX_STONES).map((it) => ({ value: it.bytes, it }));
+  for (const lvl of LEVELS) {
+    const rest = all.slice(MAX_STONES).filter((i) => i.level === lvl.key && !i.trashed);
+    if (rest.length) nodes.push({ value: sum(rest), other: { level: lvl.key, count: rest.length, bytes: sum(rest) } });
+  }
+  nodes.sort((a, b) => b.value - a.value);
+
+  for (const cell of window.Stones.squarify(nodes, 0, 0, width, height)) {
+    const seed = cell.it ? cell.it.id : 'other-' + cell.other.level;
+    const d = window.Stones.stonePath(cell, 5, seed);
+    if (!d) continue;
+    if (cell.it && cell.it.trashed) svg.append(sand(cell, seed));
+    else svg.append(stone(cell, d, seed));
+  }
 }
 
-function selectedBytes() {
-  let sum = 0;
-  for (const id of selected) sum += items.get(id)?.bytes || 0;
-  return sum;
+function stone(cell, d, seed) {
+  const it = cell.it;
+  const level = it ? it.level : cell.other.level;
+  const g = svgEl('g', { class: `stone ${level}` });
+  if (!it) g.classList.add('other');
+  if (it && state.selected.has(it.id)) g.classList.add('selected');
+  if (it && state.hot === it.id) g.classList.add('hot');
+  if (!state.seenStones.has(seed)) { g.classList.add('new'); state.seenStones.add(seed); }
+  g.dataset.id = it ? it.id : '';
+
+  const ringD = window.Stones.stonePath(cell, 1.5, seed);
+  if (ringD) g.append(svgEl('path', { d: ringD, class: 'ring' }));
+  g.append(svgEl('path', { d, class: 'body' }));
+
+  const name = it ? label(it) : `其他 ${cell.other.count} 项`;
+  const bytes = it ? it.bytes : cell.other.bytes;
+  const cx = cell.x + cell.w / 2, cy = cell.y + cell.h / 2;
+  if (cell.w > 70 && cell.h > 44) {
+    g.append(svgEl('text', { x: cx, y: cy - 2 }, clip(name, cell.w)));
+    g.append(svgEl('text', { x: cx, y: cy + 15, class: 'size' }, fmt(bytes)));
+  } else if (cell.w > 64 && cell.h > 26) {
+    g.append(svgEl('text', { x: cx, y: cy + 4, class: 'size' }, fmt(bytes)));
+  }
+
+  g.onmousemove = (e) => showTip(e, name, fmt(bytes), it ? it.reason : '较小的缓存合在一起，可以在左边列表里逐项选择');
+  g.onmouseleave = () => { hideTip(); if (it) setHot(null); };
+  if (it) {
+    g.onmouseenter = () => setHot(it.id);
+    g.onclick = () => toggle(it.id);
+  }
+  return g;
 }
 
-function updateFooter() {
-  $('selectedInfo').textContent = `已选 ${selected.size} 项 · ${fmt(selectedBytes())}`;
-  $('trashBtn').disabled = scanning || selected.size === 0;
-  $('selectRecommended').disabled = scanning || ![...items.values()].some((i) => i.level === 'recommend');
-  const selectable = [...items.values()].filter((i) => i.level !== 'keep');
-  $('selectAll').checked = selectable.length > 0 && selectable.every((i) => selected.has(i.id));
+// A cleaned stone leaves raked sand: concentric outlines of its old shape.
+function sand(cell, seed) {
+  const g = svgEl('g', { class: 'sand' });
+  const inner = svgEl('g', { class: state.seenStones.has('sand-' + seed) ? '' : 'appear' });
+  state.seenStones.add('sand-' + seed);
+  const steps = Math.max(2, Math.min(6, Math.floor(Math.min(cell.w, cell.h) / 18)));
+  for (let k = 0; k < steps; k++) {
+    const inset = 5 + k * (Math.min(cell.w, cell.h) / 2 - 8) / steps;
+    const d = window.Stones.stonePath(cell, inset, seed);
+    if (d) inner.append(svgEl('path', { d }));
+  }
+  g.append(inner);
+  if (cell.w > 70 && cell.h > 30) {
+    g.append(svgEl('text', { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 + 4 }, `已释放 ${fmt(cell.it.bytes)}`));
+  }
+  return g;
 }
 
-let renderQueued = false;
+function clip(text, width) {
+  const max = Math.max(3, Math.floor((width - 16) / 12));
+  return text.length > max ? text.slice(0, max - 1) + '…' : text;
+}
+
+// ---------- interaction ----------
+function toggle(id) {
+  state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+  renderAll();
+}
+
+function setHot(id) {
+  state.hot = id;
+  document.querySelectorAll('.row.hot, .stone.hot').forEach((n) => n.classList.remove('hot'));
+  if (!id) return;
+  document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach((n) => n.classList.add('hot'));
+}
+
+function showTip(e, title, size, reason) {
+  const tip = $('tooltip');
+  const box = $('garden').getBoundingClientRect();
+  tip.replaceChildren(el('div', '', `${title} · ${size}`), el('div', 'tr', reason));
+  tip.hidden = false;
+  const x = Math.min(e.clientX - box.left + 14, box.width - tip.offsetWidth - 8);
+  const y = Math.min(e.clientY - box.top + 14, box.height - tip.offsetHeight - 8);
+  tip.style.left = `${x}px`;
+  tip.style.top = `${y}px`;
+}
+function hideTip() { $('tooltip').hidden = true; }
+
+function renderFooter() {
+  const sel = [...state.selected].map((id) => state.items.get(id)).filter(Boolean);
+  $('selectedInfo').textContent = sel.length ? `已选 ${sel.length} 项 · ${fmt(sum(sel))}` : '未选择';
+  $('trashBtn').disabled = state.scanning || !sel.length;
+}
+
+function renderAll() {
+  renderHero();
+  renderGroups();
+  renderGarden();
+  renderFooter();
+}
+
+let queued = false;
 function queueRender() {
-  if (renderQueued) return;
-  renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; render(); });
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => { queued = false; renderAll(); });
 }
 
+// ---------- scanning ----------
 window.cleaner.onItem((it) => {
-  if (it.bytes === 0) return; // empty cache folders aren't worth listing in v0.1
-  items.set(it.id, it);
+  if (it.bytes === 0) return;
+  state.items.set(it.id, it);
   queueRender();
 });
-
-window.cleaner.onProgress(({ done, total, current }) => {
-  if (!scanning) return;
-  $('progress').max = total || 1;
-  $('progress').value = done;
-  $('status').textContent = `正在扫描（${done}/${total}）：${current}`;
+window.cleaner.onProgress((p) => {
+  if (!state.scanning) return;
+  state.progress = p;
+  renderHero();
 });
 
 async function startScan() {
-  scanning = true;
-  items.clear();
-  selected.clear();
+  Object.assign(state, { scanning: true, freedThisSession: 0, progress: { done: 0, total: 0, current: '' } });
+  state.items.clear();
+  state.selected.clear();
+  state.seenStones.clear();
   $('scanBtn').hidden = true;
   $('cancelBtn').hidden = false;
-  $('progress').hidden = false;
-  $('status').textContent = '正在准备…';
-  render();
+  renderAll();
 
-  const res = await window.cleaner.startScan();
-  scanning = false;
+  const [res, disk] = await Promise.all([window.cleaner.startScan(), window.cleaner.diskSpace()]);
+  Object.assign(state, { scanning: false, scanned: true, disk });
   $('scanBtn').hidden = false;
   $('scanBtn').textContent = '重新扫描';
   $('cancelBtn').hidden = true;
-  $('progress').hidden = true;
-  $('status').dataset.scanned = '1';
-  const total = [...items.values()].reduce((s, i) => s + i.bytes, 0);
-  const rec = [...items.values()].filter((i) => i.level === 'recommend');
-  const recText = rec.length
-    ? ` · 推荐清理 ${rec.length} 项，${fmt(rec.reduce((s, i) => s + i.bytes, 0))}`
-    : '';
-  if (!res.ok) $('status').textContent = `扫描出错：${res.error}`;
-  else if (res.cancelled) $('status').textContent = `已取消 · 已找到 ${items.size} 项，共 ${fmt(total)}${recText}`;
-  else $('status').textContent = `扫描完成 · ${items.size} 项，共 ${fmt(total)}${recText}`;
-  render();
+  renderAll();
+  if (!res.ok) $('summary').textContent = `扫描出错：${res.error}`;
+  else if (res.cancelled) $('summary').textContent = '扫描已停止，下面是已经找到的部分。';
 }
 
 $('scanBtn').onclick = startScan;
 $('cancelBtn').onclick = () => window.cleaner.cancelScan();
 
-$('selectAll').onchange = (e) => {
-  for (const it of items.values()) {
-    if (it.level === 'keep') continue; // "不建议" items are never auto-selected
-    e.target.checked ? selected.add(it.id) : selected.delete(it.id);
-  }
-  render();
-};
-
-$('selectRecommended').onclick = () => {
-  selected.clear();
-  for (const it of items.values()) if (it.level === 'recommend') selected.add(it.id);
-  render();
-};
-
-document.querySelectorAll('.sort button').forEach((b) => {
-  b.onclick = () => {
-    sortKey = b.dataset.sort;
-    document.querySelectorAll('.sort button').forEach((x) => x.classList.toggle('active', x === b));
-    render();
-  };
-});
-
+// ---------- trash ----------
 $('trashBtn').onclick = () => {
-  const sel = [...selected].map((id) => items.get(id));
+  const sel = [...state.selected].map((id) => state.items.get(id));
   const keep = sel.filter((i) => i.level === 'keep').length;
   const running = sel.filter((i) => i.appRunning).map(label);
+  $('confirmTitle').textContent = `把 ${sel.length} 项（${fmt(sum(sel))}）移到废纸篓？`;
   $('confirmText').textContent =
-    `将 ${selected.size} 项（${fmt(selectedBytes())}）移到废纸篓。` +
-    (keep ? `其中 ${keep} 项是"不建议"清理的 macOS 系统缓存。` : '') +
-    (running.length ? `${running.join('、')} 正在运行，建议先退出。` : '');
+    [keep ? `其中 ${keep} 项是不建议清理的 macOS 系统缓存。` : '',
+     running.length ? `${running.join('、')} 正在运行，建议先退出。` : '']
+      .join(' ').trim() || '这些都是缓存，App 需要时会自己重建。';
   $('confirm').showModal();
 };
 $('confirmNo').onclick = () => $('confirm').close();
 $('confirmYes').onclick = async () => {
   $('confirm').close();
-  const targets = [...selected].map((id) => items.get(id).path);
-  const results = await window.cleaner.trash(targets);
-  const failed = results.filter((r) => !r.ok);
-  let freed = 0;
-  for (const r of results) {
-    if (!r.ok) continue;
-    const it = [...items.values()].find((i) => i.path === r.path);
-    if (it) { freed += it.bytes; items.delete(it.id); selected.delete(it.id); }
-  }
-  $('status').textContent =
-    `已移到废纸篓 ${results.length - failed.length} 项，${fmt(freed)}（清空废纸篓后才会真正释放空间）` +
-    (failed.length ? ` · ${failed.length} 项失败：${failed.map((f) => f.error).join('；')}` : '');
-  render();
+  const targets = [...state.selected].map((id) => state.items.get(id));
+  const results = await window.cleaner.trash(targets.map((i) => i.path));
+  const failed = [];
+  results.forEach((r, k) => {
+    const it = targets[k];
+    if (r.ok) { it.trashed = true; state.freedThisSession += it.bytes; state.selected.delete(it.id); }
+    else failed.push(`${label(it)}：${r.error}`);
+  });
+  renderAll();
+  if (failed.length) $('summary').textContent += ` ${failed.length} 项没有移动：${failed.join('；')}`;
 };
+
+// ---------- helpers ----------
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function svgEl(tag, attrs, text) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+new ResizeObserver(() => renderGarden()).observe($('garden'));
+renderAll();

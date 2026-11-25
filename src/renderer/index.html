@@ -7,45 +7,55 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1>缓存清理</h1>
-    <div class="actions">
-      <button id="scanBtn">开始扫描</button>
-      <button id="cancelBtn" hidden>取消</button>
-    </div>
+  <header class="titlebar">
+    <span class="app-title">Cleaner</span>
+    <nav>
+      <button id="scanBtn" class="link">开始扫描</button>
+      <button id="cancelBtn" class="link" hidden>停止</button>
+    </nav>
   </header>
 
-  <div id="status" class="status">尚未扫描</div>
-  <progress id="progress" value="0" max="1" hidden></progress>
+  <main>
+    <aside class="panel">
+      <section class="hero">
+        <div class="big"><span id="bigNum">—</span><span id="bigUnit" class="unit"></span></div>
+        <div id="bigCaption" class="caption">扫描缓存，看看哪些能放心清理</div>
+        <p id="summary" class="summary"></p>
+        <div id="progressLine" class="progress" hidden><div id="progressBar"></div></div>
+      </section>
 
-  <div class="toolbar">
-    <span>
-      <button id="selectRecommended" disabled>选中推荐项</button>
-      <label><input type="checkbox" id="selectAll"> 全选</label>
-    </span>
-    <span class="sort">排序：
-      <button data-sort="bytes" class="active">大小</button>
-      <button data-sort="name">名称</button>
-    </span>
-  </div>
+      <div id="groups" class="groups"></div>
 
-  <ul id="list"></ul>
-  <div id="empty" class="empty" hidden>没有可清理的内容</div>
+      <footer class="panel-foot">
+        <span id="selectedInfo" class="muted">未选择</span>
+        <button id="trashBtn" class="primary" disabled>移到废纸篓</button>
+      </footer>
+    </aside>
 
-  <footer>
-    <span id="selectedInfo">已选 0 项 · 0 B</span>
-    <button id="trashBtn" disabled>移到废纸篓</button>
-  </footer>
+    <section class="garden" id="garden">
+      <svg id="map" role="img" aria-label="缓存占用图"></svg>
+      <div id="tooltip" class="tooltip" hidden></div>
+      <div id="emptyGarden" class="empty-garden">
+        <svg viewBox="0 0 200 120" class="rake" aria-hidden="true">
+          <path d="M10 30 Q100 10 190 30" /><path d="M10 50 Q100 30 190 50" />
+          <path d="M10 70 Q100 50 190 70" /><path d="M10 90 Q100 70 190 90" />
+        </svg>
+        <p>还没有扫描</p>
+      </div>
+    </section>
+  </main>
 
   <dialog id="confirm">
+    <h2 id="confirmTitle"></h2>
     <p id="confirmText"></p>
-    <p class="hint">可以从废纸篓恢复。</p>
+    <p class="muted">都会放进废纸篓，随时可以放回原处。</p>
     <div class="dialog-actions">
-      <button id="confirmNo">取消</button>
-      <button id="confirmYes" class="danger">移到废纸篓</button>
+      <button id="confirmNo" class="ghost">取消</button>
+      <button id="confirmYes" class="primary">移到废纸篓</button>
     </div>
   </dialog>
 
+  <script src="stones.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

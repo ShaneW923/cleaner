@@ -70,8 +70,9 @@ function matchApp(folderName, index) {
   for (const [name, info] of index.byName) {
     // Vendor-named folder: "Google" → "Google Chrome"
     if (name.startsWith(lower + ' ')) return info;
-    // App name + suffix: "LarkShell" → "Lark" (short names skipped to avoid accidents)
-    if (name.length >= 4 && lower.startsWith(name)) return info;
+    // App name + a new capitalised word: "LarkShell" → "Lark", but not
+    // "Homebrew" → "Home". Short names skipped to avoid accidents.
+    if (name.length >= 4 && lower.startsWith(name) && /[A-Z0-9_-]/.test(folderName[name.length])) return info;
   }
   return null;
 }
