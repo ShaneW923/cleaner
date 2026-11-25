@@ -10,7 +10,7 @@
   <header class="titlebar">
     <span class="app-title">Cleaner</span>
     <nav>
-      <button id="scanBtn" class="link">开始扫描</button>
+      <button id="scanBtn" class="link" hidden>重新扫描</button>
       <button id="cancelBtn" class="link" hidden>停止</button>
     </nav>
   </header>
@@ -36,11 +36,12 @@
       <svg id="map" role="img" aria-label="缓存占用图"></svg>
       <div id="tooltip" class="tooltip" hidden></div>
       <div id="emptyGarden" class="empty-garden">
-        <svg viewBox="0 0 200 120" class="rake" aria-hidden="true">
-          <path d="M10 30 Q100 10 190 30" /><path d="M10 50 Q100 30 190 50" />
-          <path d="M10 70 Q100 50 190 70" /><path d="M10 90 Q100 70 190 90" />
+        <svg viewBox="0 0 240 240" class="rake" aria-hidden="true">
+          <circle cx="120" cy="120" r="112" /><circle cx="120" cy="120" r="96" />
+          <circle cx="120" cy="120" r="80" />
         </svg>
-        <p>还没有扫描</p>
+        <button id="bigScanBtn" class="big-scan">开始扫描</button>
+        <p>只看 ~/Library/Caches，扫描不会删除任何东西</p>
       </div>
     </section>
   </main>

@@ -9,16 +9,18 @@ if (!window.cleaner) {
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const MAX_STONES = 28;
+// Only the "recommend" card offers select-all; the others are picked one by one.
 const LEVELS = [
-  { key: 'recommend', title: '推荐清理', open: true, selectAll: true },
-  { key: 'ok', title: '可以清理', open: true, selectAll: true },
-  { key: 'keep', title: '不建议', open: false, selectAll: false },
+  { key: 'recommend', title: '推荐清理', desc: '删了不会丢数据，可以放心清理', open: true, selectAll: true },
+  { key: 'ok', title: '可以清理', desc: 'App 正在运行或占用较小，按需挑选', open: true, selectAll: false, limit: 8 },
+  { key: 'keep', title: '不建议', desc: 'macOS 系统缓存，系统会自己管理', open: false, selectAll: false, limit: 8 },
 ];
 
 const state = {
   items: new Map(),   // id → item (item.trashed once moved to Trash)
   selected: new Set(),
   open: Object.fromEntries(LEVELS.map((l) => [l.key, l.open])),
+  showAll: {},
   scanning: false,
   scanned: false,
   progress: { done: 0, total: 0, current: '' },
@@ -63,7 +65,8 @@ function renderHero() {
         : '没有推荐清理的内容。';
   }
 
-  if (big === null) { $('bigNum').textContent = '—'; $('bigUnit').textContent = ''; }
+  document.querySelector('.big').hidden = big === null;
+  if (big === null) { $('bigNum').textContent = ''; $('bigUnit').textContent = ''; }
   else { const [n, u] = split(big); $('bigNum').textContent = n; $('bigUnit').textContent = u; }
   $('bigCaption').textContent = caption;
   $('summary').textContent = summary;
@@ -81,24 +84,39 @@ function renderGroups() {
     if (!list.length) continue;
     const sel = list.filter((i) => state.selected.has(i.id));
 
-    const g = el('div', 'group');
+    const g = el('div', `group ${lvl.key}`);
     const head = el('div', 'group-head');
-    const fold = el('button', 'fold', state.open[lvl.key] ? '▾' : '▸');
-    fold.onclick = () => { state.open[lvl.key] = !state.open[lvl.key]; renderGroups(); };
-    head.append(fold, el('span', `dot ${lvl.key}`), el('span', 'title', lvl.title));
-    head.append(el('span', 'meta', sel.length ? `已选 ${fmt(sum(sel))} / ${fmt(sum(list))}` : `${list.length} 项 · ${fmt(sum(list))}`));
+    head.onclick = () => { state.open[lvl.key] = !state.open[lvl.key]; renderGroups(); };
+    const top = el('div', 'head-top');
+    top.append(el('span', `dot ${lvl.key}`), el('span', 'title', lvl.title));
+    top.append(el('span', 'meta', sel.length ? `已选 ${fmt(sum(sel))} / ${fmt(sum(list))}` : `${list.length} 项 · ${fmt(sum(list))}`));
+    top.append(el('span', 'fold', state.open[lvl.key] ? '收起' : '展开'));
+    const bottom = el('div', 'head-bottom');
+    bottom.append(el('span', 'desc', lvl.desc));
     if (lvl.selectAll) {
       const allOn = sel.length === list.length;
-      const t = el('button', 'toggle', allOn ? '全不选' : '全选');
-      t.onclick = () => { list.forEach((i) => (allOn ? state.selected.delete(i.id) : state.selected.add(i.id))); renderAll(); };
-      head.append(t);
+      const t = el('button', 'pill', allOn ? '取消全选' : '全选这组');
+      t.onclick = (e) => {
+        e.stopPropagation();
+        list.forEach((i) => (allOn ? state.selected.delete(i.id) : state.selected.add(i.id)));
+        renderAll();
+      };
+      bottom.append(t);
     }
+    head.append(top, bottom);
     g.append(head);
 
     if (state.open[lvl.key]) {
+      // Long groups show their biggest few until expanded, so cards stay readable.
+      const limit = lvl.limit && !state.showAll[lvl.key] ? lvl.limit : Infinity;
       const ul = el('ul', 'rows');
-      for (const it of list) ul.append(row(it));
+      for (const it of list.slice(0, limit)) ul.append(row(it));
       g.append(ul);
+      if (list.length > limit) {
+        const more = el('button', 'more', `显示其余 ${list.length - limit} 项 · ${fmt(sum(list.slice(limit)))}`);
+        more.onclick = () => { state.showAll[lvl.key] = true; renderGroups(); };
+        g.append(more);
+      }
     }
     box.append(g);
   }
@@ -291,6 +309,7 @@ async function startScan() {
 }
 
 $('scanBtn').onclick = startScan;
+$('bigScanBtn').onclick = startScan;
 $('cancelBtn').onclick = () => window.cleaner.cancelScan();
 
 // ---------- trash ----------
