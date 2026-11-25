@@ -20,6 +20,18 @@
       <section class="hero">
         <div class="big"><span id="bigNum">—</span><span id="bigUnit" class="unit"></span></div>
         <div id="bigCaption" class="caption">扫描缓存，看看哪些能放心清理</div>
+        <div id="disk" class="disk" hidden>
+          <div class="diskbar">
+            <span id="segUsed" class="seg used"></span><span id="segCache" class="seg cache"></span><span id="segSel" class="seg sel"></span><span id="segFree" class="seg free"></span>
+          </div>
+          <div class="legend">
+            <span><i class="used"></i><span id="lgUsedName">已用</span> <b id="lgUsed"></b></span>
+            <span id="lgCacheWrap"><i class="cache"></i>缓存 <b id="lgCache"></b></span>
+            <span id="lgSelWrap"><i class="sel"></i>已选 <b id="lgSel"></b></span>
+            <span><i class="free"></i>可用 <b id="lgFree"></b></span>
+          </div>
+          <div id="diskTotal" class="disk-total"></div>
+        </div>
         <p id="summary" class="summary"></p>
         <div id="progressLine" class="progress" hidden><div id="progressBar"></div></div>
       </section>

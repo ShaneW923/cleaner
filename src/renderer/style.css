@@ -67,6 +67,21 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 360px) 1fr; 
 .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
 .big[hidden] + .caption { margin-top: 18px; font-size: 14px; }
 .summary { margin: 14px 0 6px; font-size: 14px; min-height: 1.45em; }
+
+/* Whole-disk overview: other usage | caches | selected | free */
+.disk { margin-top: 16px; }
+.diskbar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); }
+.seg { height: 100%; transition: width .3s ease; }
+.seg + .seg { margin-left: 2px; }
+.seg[data-w="0"] { margin-left: 0; }
+.seg.used, .legend i.used { background: var(--stone-3); }
+.seg.cache, .legend i.cache { background: var(--stone-2); }
+.seg.sel, .legend i.sel { background: var(--stone-1); }
+.seg.free, .legend i.free { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+.legend b { font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+.disk-total { margin-top: 4px; font-size: 11px; color: var(--muted); }
 .progress { height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 8px 0 4px; }
 #progressBar { height: 100%; width: 0; background: var(--ink); transition: width .25s ease; }
 

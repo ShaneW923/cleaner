@@ -47,17 +47,22 @@ const sum = (arr) => arr.reduce((s, i) => s + i.bytes, 0);
 function renderHero() {
   const all = live();
   const rec = all.filter((i) => i.level === 'recommend');
+  const selBytes = sum(all.filter((i) => state.selected.has(i.id)));
+  const free = state.disk ? state.disk.free : null;
   let big = null, caption, summary = '';
 
+  // Big number = free disk space, plus whatever is selected for cleaning.
+  if (free !== null) {
+    big = free + selBytes;
+    caption = selBytes ? `清理所选后可用（现在 ${fmt(free)}）` : '磁盘可用空间';
+  }
+
   if (state.scanning) {
-    big = sum(all);
     const { done, total, current } = state.progress;
     caption = total ? `正在扫描 ${done}/${total} · ${current}` : '正在准备…';
   } else if (!state.scanned) {
-    caption = '扫描缓存，看看哪些能放心清理';
+    if (free === null) caption = '扫描缓存，看看哪些能放心清理';
   } else {
-    big = sum(rec);
-    caption = `推荐清理 · 缓存共 ${fmt(sum(all))}` + (state.disk ? ` · 磁盘可用 ${fmt(state.disk.free)}` : '');
     summary = state.freedThisSession
       ? `已释放 ${fmt(state.freedThisSession)}，在废纸篓里，清空后才真正腾出空间。`
       : rec.length
@@ -73,6 +78,34 @@ function renderHero() {
   $('progressLine').hidden = !state.scanning;
   const { done, total } = state.progress;
   $('progressBar').style.width = total ? `${(done / total) * 100}%` : '0';
+  renderDisk(sum(all), selBytes);
+}
+
+function renderDisk(cacheBytes, selBytes) {
+  const d = state.disk;
+  $('disk').hidden = !d;
+  if (!d) return;
+  const used = d.total - d.free;
+  const parts = {
+    Used: Math.max(0, used - cacheBytes),
+    Cache: cacheBytes - selBytes,
+    Sel: selBytes,
+    Free: d.free,
+  };
+  for (const [k, v] of Object.entries(parts)) {
+    const pct = (v / d.total) * 100;
+    // Keep tiny-but-nonzero segments visible as a sliver
+    $('seg' + k).style.width = v > 0 ? `max(3px, ${pct}%)` : '0';
+    $('seg' + k).dataset.w = v > 0 ? '1' : '0';
+  }
+  $('lgUsed').textContent = fmt(parts.Used);
+  $('lgUsedName').textContent = cacheBytes ? '其他占用' : '已用';
+  $('lgCache').textContent = fmt(cacheBytes);
+  $('lgCacheWrap').hidden = !cacheBytes;
+  $('lgSel').textContent = fmt(selBytes);
+  $('lgSelWrap').hidden = !selBytes;
+  $('lgFree').textContent = fmt(d.free);
+  $('diskTotal').textContent = `磁盘共 ${fmt(d.total)}，已用 ${fmt(used)}（${Math.round((used / d.total) * 100)}%）`;
 }
 
 // ---------- render: grouped list ----------
@@ -335,6 +368,7 @@ $('confirmYes').onclick = async () => {
     if (r.ok) { it.trashed = true; state.freedThisSession += it.bytes; state.selected.delete(it.id); }
     else failed.push(`${label(it)}：${r.error}`);
   });
+  state.disk = (await window.cleaner.diskSpace()) || state.disk;
   renderAll();
   if (failed.length) $('summary').textContent += ` ${failed.length} 项没有移动：${failed.join('；')}`;
 };
@@ -355,3 +389,5 @@ function svgEl(tag, attrs, text) {
 
 new ResizeObserver(() => renderGarden()).observe($('garden'));
 renderAll();
+// Show the disk overview straight away, before any scan.
+window.cleaner.diskSpace().then((disk) => { state.disk = disk; renderAll(); });
