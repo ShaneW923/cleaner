@@ -1,4 +1,11 @@
 const $ = (id) => document.getElementById(id);
+
+// Opened as a plain web page (not inside the Electron app) → no file access.
+if (!window.cleaner) {
+  document.body.innerHTML =
+    '<p style="padding:40px;text-align:center">这是界面预览，不能扫描。请在项目里运行 <code>npm start</code> 打开 App。</p>';
+  throw new Error('window.cleaner missing: not running inside Electron');
+}
 const items = new Map(); // id → item
 const selected = new Set();
 let sortKey = 'bytes';

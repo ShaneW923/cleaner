@@ -58,7 +58,7 @@ function scanCaches({ onItem, onProgress }) {
         finished++;
         const app = matchApp(entry.name, index);
         const system = isAppleSystem(entry.name);
-        onItem({
+        await onItem({
           id: entry.name,
           path: full,
           folder: entry.name,

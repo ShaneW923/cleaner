@@ -41,6 +41,7 @@ ipcMain.handle('scan:start', async () => {
   if (currentScan) currentScan.cancel();
   const send = (ch, data) => win && !win.isDestroyed() && win.webContents.send(ch, data);
   const scan = scanCaches({
+    // Awaited by the scanner, so every item is sent before the scan reports done.
     onItem: async (item) => send('scan:item', { ...item, icon: await appIcon(item.appPath) }),
     onProgress: (p) => send('scan:progress', p),
   });
