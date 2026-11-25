@@ -8,38 +8,52 @@ const MB = 1e6;
 const item = (o) => ({ folder: 'x', bytes: 10 * MB, system: false, appName: null, appRunning: false, ...o });
 const judged = (ratio, total = 500 * MB) => ({ judged: true, mediaRatio: ratio, mediaBytes: ratio * total, totalBytes: total });
 
-test('recommend = deleting has no cost: dev tools and updater leftovers', () => {
-  const pip = advise(item({ folder: 'pip', bytes: 400 * MB }));
-  assert.deepStrictEqual([pip.level, pip.tags], ['recommend', ['redownload']]);
-  const shipit = advise(item({ folder: 'com.foo.bar.ShipIt', appName: 'Bar' }));
-  assert.deepStrictEqual([shipit.level, shipit.tags], ['recommend', ['noimpact']]);
+test('tags say what a folder is', () => {
+  const t = (o) => advise(item(o)).tags[0];
+  assert.strictEqual(t({ folder: 'pip' }), 'download');
+  assert.strictEqual(t({ folder: 'node-gyp' }), 'build');
+  assert.strictEqual(t({ folder: 'com.foo.bar.ShipIt', appName: 'Bar' }), 'installer');
+  assert.strictEqual(t({ folder: 'chrome_crashpad_handler' }), 'crash');
+  assert.strictEqual(t({ folder: 'logs' }), 'log');
+  assert.strictEqual(t({ folder: 'Google', appName: 'Google Chrome', contents: { ...judged(0.15), chromium: true } }), 'web');
+  assert.strictEqual(t({ folder: 'com.tencent.QQMusicMac', appName: 'QQMusic', contents: { ...judged(0.65), urlCache: true } }), 'image');
+  assert.strictEqual(t({ folder: 'com.x.app', appName: 'X', contents: { ...judged(0.01), urlCache: true } }), 'network');
+  assert.strictEqual(t({ folder: 'com.x.app', appName: 'X' }), 'appcache');
+  assert.strictEqual(t({ folder: 'com.apple.helpd', system: true }), 'system');
+});
+
+test('an app cache that is really an updater download is an installer', () => {
+  const a = advise(item({ folder: 'com.openai.codex', appName: 'ChatGPT', bytes: 2400 * MB,
+    contents: { ...judged(0.01), installerBytes: 2300 * MB, installerRatio: 0.96, urlCache: true } }));
+  assert.deepStrictEqual([a.type, a.level], ['installer', 'recommend']);
+  assert.match(a.reason, /安装包/);
+});
+
+test('installers, download, build caches, crash reports and logs are recommended', () => {
+  for (const folder of ['pip', 'node-gyp', 'com.foo.bar.ShipIt', 'SentryCrash', 'logs']) {
+    assert.strictEqual(advise(item({ folder, appName: folder.endsWith('ShipIt') ? 'Bar' : null })).level, 'recommend', folder);
+  }
 });
 
 test('size never changes the group', () => {
   const big = advise(item({ folder: 'Steam', appName: 'Steam', bytes: 4000 * MB }));
   const small = advise(item({ folder: 'Steam', appName: 'Steam', bytes: 1 * MB }));
   assert.strictEqual(big.level, small.level);
-  assert.deepStrictEqual(big.tags, ['slower']);
 });
 
 test('running is a status tag, not a group', () => {
   const a = advise(item({ folder: 'Arc', appName: 'Arc', appRunning: true }));
-  assert.deepStrictEqual([a.level, a.tags], ['ok', ['slower', 'running']]);
+  assert.deepStrictEqual([a.level, a.tags], ['ok', ['appcache', 'running']]);
   assert.match(a.reason, /先退出/);
 });
 
 test('chat apps: B when contents were judged, A as fallback', () => {
   const lark = { folder: 'LarkShell', appName: 'Lark', appBundleId: 'com.electron.lark' };
-  assert.deepStrictEqual(advise(item({ ...lark, contents: judged(0.6) })).tags, ['media']);
-  assert.deepStrictEqual(advise(item({ ...lark, contents: judged(0.03) })).tags, ['slower']);
-  assert.deepStrictEqual(advise(item({ ...lark, contents: { judged: false } })).tags, ['maybechat']);
-  assert.deepStrictEqual(advise(item(lark)).tags, ['maybechat']);
-});
-
-test('media in non-chat caches only shows up in the explanation', () => {
-  const a = advise(item({ folder: 'Steam', appName: 'Steam', contents: judged(0.54) }));
-  assert.deepStrictEqual(a.tags, ['slower']);
-  assert.match(a.reason, /图片或视频/);
+  assert.deepStrictEqual(advise(item({ ...lark, contents: judged(0.6) })).tags, ['chat', 'media']);
+  assert.deepStrictEqual(advise(item({ ...lark, contents: judged(0.03) })).tags, ['chat']);
+  assert.match(advise(item({ ...lark, contents: judged(0.03) })).reason, /3%/);
+  assert.deepStrictEqual(advise(item({ ...lark, contents: { judged: false } })).tags, ['chat', 'maybechat']);
+  assert.deepStrictEqual(advise(item(lark)).tags, ['chat', 'maybechat']);
 });
 
 test('QQ is a chat app but QQ Music is not', () => {
@@ -52,14 +66,15 @@ test('macOS caches are never recommended, including plain-named ones', () => {
   assert.strictEqual(advise(item({ folder: 'GeoServices', bytes: 70 * MB })).level, 'keep');
 });
 
-test('unidentified folders say when they were last touched', () => {
-  const a = advise(item({ folder: 'com.west2online.ClashX', mtimeMs: Date.UTC(2025, 2, 10) }));
-  assert.deepStrictEqual([a.level, a.tags], ['ok', ['unknown']]);
-  assert.match(a.reason, /2025 年 3 月/);
+test('unidentified folders keep their type, add a warning and the last change date', () => {
+  const a = advise(item({ folder: 'com.onevcat.Kingfisher.ImageCache.default', mtimeMs: Date.UTC(2025, 0, 10) }));
+  assert.deepStrictEqual([a.level, a.tags], ['ok', ['image', 'orphan']]);
+  assert.match(a.reason, /2025 年 1 月/);
+  assert.strictEqual(advise(item({ folder: 'crashpad_handler' })).level, 'recommend');
 });
 
 test('partial access adds a status tag', () => {
-  assert.deepStrictEqual(advise(item({ folder: 'com.x.gone', partial: true })).tags, ['unknown', 'partial']);
+  assert.deepStrictEqual(advise(item({ folder: 'com.x.gone', partial: true })).tags, ['appcache', 'orphan', 'partial']);
 });
 
 test('media sniffing finds signatures after a cache header', () => {

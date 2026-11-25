@@ -11,24 +11,30 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const MAX_STONES = 28;
 // Only the "recommend" card offers select-all; the others are picked one by one.
 const LEVELS = [
-  { key: 'recommend', title: '推荐清理', desc: '删了没有任何影响', open: true, selectAll: true },
+  { key: 'recommend', title: '推荐清理', desc: '安装包、下载缓存、崩溃报告这类，删了没有任何影响', open: true, selectAll: true },
   { key: 'ok', title: '可以清理', desc: '不会丢数据，但有一点代价，看每项的标签', open: true, selectAll: false, limit: 8 },
   { key: 'keep', title: '不建议', desc: 'macOS 系统缓存，系统会自己管理', open: false, selectAll: false, limit: 8 },
 ];
 
 // Chips shown under each name; the full sentence (item.reason) appears on hover.
-// The first tag is always the consequence of deleting; status tags follow.
+// The first tag says what the folder IS; warnings and status follow.
+// (Whether to delete is the group; what it costs is in the hover text.)
 const TAGS = {
-  // 推荐清理
-  noimpact: { label: '无影响', tone: 'good' },
-  redownload: { label: '需要时重新下载', tone: 'good' },
-  // 可以清理
-  slower: { label: '打开会变慢' },
-  media: { label: '含图片视频', tone: 'warn' },
+  installer: { label: '安装包', tone: 'type' },
+  download: { label: '下载缓存', tone: 'type' },
+  build: { label: '编译缓存', tone: 'type' },
+  crash: { label: '崩溃报告', tone: 'type' },
+  log: { label: '日志', tone: 'type' },
+  web: { label: '网页缓存', tone: 'type' },
+  image: { label: '图片缓存', tone: 'type' },
+  network: { label: '网络缓存', tone: 'type' },
+  chat: { label: '聊天缓存', tone: 'type' },
+  appcache: { label: 'App 缓存', tone: 'type' },
+  system: { label: '系统缓存', tone: 'type' },
+  // warnings
+  orphan: { label: '未找到 App', tone: 'warn' },
+  media: { label: '含聊天图片', tone: 'warn' },
   maybechat: { label: '可能含聊天文件', tone: 'warn' },
-  unknown: { label: '来源不明', tone: 'warn' },
-  // 不建议
-  system: { label: '系统管理' },
   // status
   running: { label: '运行中', tone: 'status' },
   partial: { label: '部分无权限', tone: 'status' },

@@ -16,6 +16,10 @@ const OTHER_EXT = new Set([
   'gz', 'tar', 'whl', 'node', 'dylib', 'so', 'pyc', 'jar', 'baj', 'baf', 'ldb',
 ]);
 
+// Folder names that reveal what a cache is
+const CHROMIUM_DIRS = new Set(['Code Cache', 'Cache_Data', 'GPUCache', 'htmlcache', 'Service Worker']);
+const INSTALLER_DIRS = new Set(['org.sparkle-project.Sparkle', 'Squirrel', 'pending-update', 'updates']);
+
 const SNIFF_BYTES = 4096;
 const SNIFF_COUNT = 1000;
 
@@ -52,27 +56,37 @@ async function sniff(file) {
 
 // Returns {
 //   judged: boolean,   // false → we couldn't tell (fall back to app-based guess)
-//   mediaBytes, totalBytes, mediaRatio
+//   mediaBytes, totalBytes, mediaRatio,
+//   installerBytes, installerRatio,  // inside updater download folders (Sparkle…)
+//   chromium,          // has Chromium web cache folders (Code Cache, Cache_Data…)
+//   urlCache,          // has a macOS URL cache (Cache.db) at the top
 // }
 async function analyzeContents(dir, { maxFiles = 150000, timeMs = 4000 } = {}) {
   const deadline = Date.now() + timeMs;
   let mediaBytes = 0, otherBytes = 0, unknownBytes = 0, files = 0;
+  let installerBytes = 0, chromium = false, urlCache = false;
   let complete = true;
   const unknown = []; // [size, path], largest kept for sniffing
 
-  const stack = [dir];
+  const stack = [[dir, false]]; // [path, inside an updater download folder]
   while (stack.length) {
     if (files >= maxFiles || Date.now() > deadline) { complete = false; break; }
-    const cur = stack.pop();
+    const [cur, inInstaller] = stack.pop();
     let entries;
     try { entries = await fs.readdir(cur, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
       const full = path.join(cur, e.name);
-      if (e.isDirectory()) { stack.push(full); continue; }
+      if (e.isDirectory()) {
+        if (CHROMIUM_DIRS.has(e.name)) chromium = true;
+        stack.push([full, inInstaller || INSTALLER_DIRS.has(e.name)]);
+        continue;
+      }
       if (!e.isFile()) continue;
+      if (cur === dir && e.name === 'Cache.db') urlCache = true;
       let size;
       try { size = (await fs.lstat(full)).size; } catch { continue; }
       files++;
+      if (inInstaller) installerBytes += size;
       const ext = path.extname(e.name).slice(1).toLowerCase();
       if (MEDIA_EXT.has(ext)) mediaBytes += size;
       else if (OTHER_EXT.has(ext)) otherBytes += size;
@@ -103,6 +117,10 @@ async function analyzeContents(dir, { maxFiles = 150000, timeMs = 4000 } = {}) {
     mediaBytes: Math.round(media),
     totalBytes,
     mediaRatio: totalBytes ? media / totalBytes : 0,
+    installerBytes,
+    installerRatio: totalBytes ? installerBytes / totalBytes : 0,
+    chromium,
+    urlCache,
     files,
     complete,
     sampleShare,
