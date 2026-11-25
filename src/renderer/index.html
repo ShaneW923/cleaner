@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'">
+  <title>Cleaner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>缓存清理</h1>
+    <div class="actions">
+      <button id="scanBtn">开始扫描</button>
+      <button id="cancelBtn" hidden>取消</button>
+    </div>
+  </header>
+
+  <div id="status" class="status">尚未扫描</div>
+  <progress id="progress" value="0" max="1" hidden></progress>
+
+  <div class="toolbar">
+    <label><input type="checkbox" id="selectAll"> 全选</label>
+    <span class="sort">排序：
+      <button data-sort="bytes" class="active">大小</button>
+      <button data-sort="name">名称</button>
+    </span>
+  </div>
+
+  <ul id="list"></ul>
+  <div id="empty" class="empty" hidden>没有可清理的内容</div>
+
+  <footer>
+    <span id="selectedInfo">已选 0 项 · 0 B</span>
+    <button id="trashBtn" disabled>移到废纸篓</button>
+  </footer>
+
+  <dialog id="confirm">
+    <p id="confirmText"></p>
+    <p class="hint">可以从废纸篓恢复。</p>
+    <div class="dialog-actions">
+      <button id="confirmNo">取消</button>
+      <button id="confirmYes" class="danger">移到废纸篓</button>
+    </div>
+  </dialog>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
