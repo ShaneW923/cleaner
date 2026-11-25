@@ -6,6 +6,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { buildAppIndex, matchApp, runningAppPaths } = require('./apps');
 const { advise, isSystem, TOOLS } = require('./advisor');
+const { analyzeContents } = require('./contents');
+
+const CONTENT_MIN_BYTES = 20 * 1000 * 1000;
 
 // Which file's Finder icon to show for each kind of row.
 const ICONS = {
@@ -63,9 +66,9 @@ function scanCaches({ onItem, onProgress }) {
         onProgress({ done: finished, total, current: entry.name });
         const { bytes, partial } = await folderSize(full, procs);
         if (cancelled) return;
-        finished++;
         // Known dev tools are never attributed to an app
-        const app = TOOLS[entry.name.toLowerCase()] ? null : matchApp(entry.name, index);
+        const isTool = Boolean(TOOLS[entry.name.toLowerCase()]);
+        const app = isTool ? null : matchApp(entry.name, index);
         const base = {
           id: entry.name,
           path: full,
@@ -74,10 +77,19 @@ function scanCaches({ onItem, onProgress }) {
           partial,
           system: isAppleSystem(entry.name),
           appName: app ? app.name : null,
+          appBundleId: app ? app.bundleId : null,
           appPath: app ? app.path : null,
           appRunning: Boolean(app && running.has(app.path)),
         };
         base.system = isSystem(base);
+        try { base.mtimeMs = (await fs.stat(full)).mtimeMs; } catch {}
+        // Look inside sizeable app / unidentified caches for images and video
+        if (!isTool && !(base.system && !app) && bytes >= CONTENT_MIN_BYTES) {
+          onProgress({ done: finished, total, current: `${entry.name}（检查内容）` });
+          base.contents = await analyzeContents(full);
+          if (cancelled) return;
+        }
+        finished++;
         const advice = advise(base);
         // "Running" only matters for app caches (e.g. not the Electron download cache)
         if (advice.kind !== 'app') base.appRunning = false;

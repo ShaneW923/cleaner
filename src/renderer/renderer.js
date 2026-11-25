@@ -11,22 +11,27 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const MAX_STONES = 28;
 // Only the "recommend" card offers select-all; the others are picked one by one.
 const LEVELS = [
-  { key: 'recommend', title: '推荐清理', desc: '删了不会丢数据，可以放心清理', open: true, selectAll: true },
-  { key: 'ok', title: '可以清理', desc: 'App 正在运行或占用较小，按需挑选', open: true, selectAll: false, limit: 8 },
+  { key: 'recommend', title: '推荐清理', desc: '删了没有任何影响', open: true, selectAll: true },
+  { key: 'ok', title: '可以清理', desc: '不会丢数据，但有一点代价，看每项的标签', open: true, selectAll: false, limit: 8 },
   { key: 'keep', title: '不建议', desc: 'macOS 系统缓存，系统会自己管理', open: false, selectAll: false, limit: 8 },
 ];
 
 // Chips shown under each name; the full sentence (item.reason) appears on hover.
+// The first tag is always the consequence of deleting; status tags follow.
 const TAGS = {
-  large: { label: '占用大', tone: 'strong' },
-  tool: { label: '开发工具' },
-  redownload: { label: '可重新下载' },
-  rebuild: { label: '会自动重建' },
-  update: { label: '更新残留' },
-  running: { label: '运行中', tone: 'warn' },
-  orphan: { label: '未找到 App', tone: 'warn' },
-  system: { label: '系统组件' },
-  partial: { label: '部分无权限' },
+  // 推荐清理
+  noimpact: { label: '无影响', tone: 'good' },
+  redownload: { label: '需要时重新下载', tone: 'good' },
+  // 可以清理
+  slower: { label: '打开会变慢' },
+  media: { label: '含图片视频', tone: 'warn' },
+  maybechat: { label: '可能含聊天文件', tone: 'warn' },
+  unknown: { label: '来源不明', tone: 'warn' },
+  // 不建议
+  system: { label: '系统管理' },
+  // status
+  running: { label: '运行中', tone: 'status' },
+  partial: { label: '部分无权限', tone: 'status' },
 };
 
 const state = {

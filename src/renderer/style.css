@@ -17,6 +17,8 @@
   --line-strong: #26241f40;
   --warn: #9a5b12;
   --warn-bg: #d98a2a26;
+  --good: #3f6b3a;
+  --good-bg: #5f9a5426;
   --accent: #26241f;
   --accent-ink: #efe9dd;
   color-scheme: light;
@@ -41,6 +43,8 @@
     --line-strong: #ece6da40;
     --warn: #e6b070;
     --warn-bg: #e6b07022;
+    --good: #a9cf9c;
+    --good-bg: #a9cf9c1f;
     --accent: #e8e2d4;
     --accent-ink: #1c1b19;
     color-scheme: dark;
@@ -118,8 +122,9 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 360px) 1fr; 
 .row .name .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .tag { font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 4px; color: var(--muted); background: var(--line); white-space: nowrap; }
-.tag.strong { color: var(--ink); background: var(--line-strong); }
+.tag.good { color: var(--good); background: var(--good-bg); }
 .tag.warn { color: var(--warn); background: var(--warn-bg); }
+.tag.status { background: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
 .row .size { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
 .badge { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; margin-left: 6px; }
 
