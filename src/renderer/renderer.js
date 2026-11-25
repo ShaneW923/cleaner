@@ -16,6 +16,19 @@ const LEVELS = [
   { key: 'keep', title: '不建议', desc: 'macOS 系统缓存，系统会自己管理', open: false, selectAll: false, limit: 8 },
 ];
 
+// Chips shown under each name; the full sentence (item.reason) appears on hover.
+const TAGS = {
+  large: { label: '占用大', tone: 'strong' },
+  tool: { label: '开发工具' },
+  redownload: { label: '可重新下载' },
+  rebuild: { label: '会自动重建' },
+  update: { label: '更新残留' },
+  running: { label: '运行中', tone: 'warn' },
+  orphan: { label: '未找到 App', tone: 'warn' },
+  system: { label: '系统组件' },
+  partial: { label: '部分无权限' },
+};
+
 const state = {
   items: new Map(),   // id → item (item.trashed once moved to Trash)
   selected: new Set(),
@@ -31,14 +44,16 @@ const state = {
 };
 
 // ---------- formatting ----------
-function split(bytes) {
+// precise: always keep one decimal, so free space visibly changes as you select
+function split(bytes, precise = false) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
   while (bytes >= 1000 && i < units.length - 1) { bytes /= 1000; i++; }
-  const num = i === 0 ? String(Math.round(bytes)) : bytes >= 100 ? bytes.toFixed(0) : bytes.toFixed(1);
+  const num = i === 0 ? String(Math.round(bytes)) : bytes >= 100 && !precise ? bytes.toFixed(0) : bytes.toFixed(1);
   return [num, units[i]];
 }
 const fmt = (b) => split(b).join(' ');
+const fmtPrecise = (b) => split(b, true).join(' ');
 const label = (it) => it.displayName || it.appName || it.folder;
 const live = () => [...state.items.values()].filter((i) => !i.trashed);
 const sum = (arr) => arr.reduce((s, i) => s + i.bytes, 0);
@@ -54,7 +69,7 @@ function renderHero() {
   // Big number = free disk space, plus whatever is selected for cleaning.
   if (free !== null) {
     big = free + selBytes;
-    caption = selBytes ? `清理所选后可用（现在 ${fmt(free)}）` : '磁盘可用空间';
+    caption = selBytes ? `清理所选后可用（现在 ${fmtPrecise(free)}，多出 ${fmt(selBytes)}）` : '磁盘可用空间';
   }
 
   if (state.scanning) {
@@ -72,7 +87,7 @@ function renderHero() {
 
   document.querySelector('.big').hidden = big === null;
   if (big === null) { $('bigNum').textContent = ''; $('bigUnit').textContent = ''; }
-  else { const [n, u] = split(big); $('bigNum').textContent = n; $('bigUnit').textContent = u; }
+  else { const [n, u] = split(big, true); $('bigNum').textContent = n; $('bigUnit').textContent = u; }
   $('bigCaption').textContent = caption;
   $('summary').textContent = summary;
   $('progressLine').hidden = !state.scanning;
@@ -104,7 +119,7 @@ function renderDisk(cacheBytes, selBytes) {
   $('lgCacheWrap').hidden = !cacheBytes;
   $('lgSel').textContent = fmt(selBytes);
   $('lgSelWrap').hidden = !selBytes;
-  $('lgFree').textContent = fmt(d.free);
+  $('lgFree').textContent = fmtPrecise(d.free);
   $('diskTotal').textContent = `磁盘共 ${fmt(d.total)}，已用 ${fmt(used)}（${Math.round((used / d.total) * 100)}%）`;
 }
 
@@ -159,7 +174,6 @@ function row(it) {
   const li = el('li', 'row');
   li.dataset.id = it.id;
   if (state.hot === it.id) li.classList.add('hot');
-  li.title = it.path;
 
   const cb = el('input', 'check');
   cb.type = 'checkbox';
@@ -169,15 +183,17 @@ function row(it) {
   const icon = it.icon ? Object.assign(el('img'), { src: it.icon }) : el('span');
 
   const name = el('div', 'name');
-  const t = el('div', 't', label(it));
-  if (it.appRunning) t.append(el('span', 'badge', '运行中'));
-  if (it.kind === 'orphan') t.append(el('span', 'badge', '未找到 App'));
-  if (it.partial) t.append(el('span', 'badge', '部分无权限'));
-  name.append(t, el('div', 'r', it.reason));
+  const tags = el('div', 'tags');
+  for (const key of it.tags || []) {
+    const def = TAGS[key];
+    if (def) tags.append(el('span', `tag ${def.tone || ''}`, def.label));
+  }
+  name.append(el('div', 't', label(it)), tags);
 
   li.append(cb, icon, name, el('span', 'size', fmt(it.bytes)));
   li.onmouseenter = () => setHot(it.id);
-  li.onmouseleave = () => setHot(null);
+  li.onmousemove = (e) => showTip(e, label(it), fmt(it.bytes), it.reason, it.path);
+  li.onmouseleave = () => { setHot(null); hideTip(); };
   li.ondblclick = () => window.cleaner.reveal(it.path);
   return li;
 }
@@ -200,7 +216,16 @@ function renderGarden() {
   }
   nodes.sort((a, b) => b.value - a.value);
 
-  for (const cell of window.Stones.squarify(nodes, 0, 0, width, height)) {
+  // Free space gets its own column on the right. It isn't drawn to scale —
+  // at 10x+ the cache total it would shrink every stone to a dot.
+  let mapW = width;
+  if (state.disk) {
+    const freeW = Math.max(170, Math.round(width * 0.24));
+    mapW = width - freeW;
+    svg.append(freeArea({ x: mapW, y: 0, w: freeW, h: height }));
+  }
+
+  for (const cell of window.Stones.squarify(nodes, 0, 0, mapW, height)) {
     const seed = cell.it ? cell.it.id : 'other-' + cell.other.level;
     const d = window.Stones.stonePath(cell, 5, seed);
     if (!d) continue;
@@ -260,6 +285,29 @@ function sand(cell, seed) {
   return g;
 }
 
+// Free disk space: raked sand around an empty centre, with the figure in it.
+function freeArea(cell) {
+  const free = state.disk.free;
+  const selBytes = sum(live().filter((i) => state.selected.has(i.id)));
+  const g = svgEl('g', { class: 'free-area' });
+  const seed = 'free-space';
+  const steps = 7;
+  for (let k = 0; k < steps; k++) {
+    const inset = 5 + k * (Math.min(cell.w, cell.h) / 2 - 64) / steps; // leave room for the figure
+    const d = window.Stones.stonePath(cell, inset, seed);
+    if (d) g.append(svgEl('path', { d, class: k === 0 ? 'edge' : 'rake' }));
+  }
+  const cx = cell.x + cell.w / 2, cy = cell.y + cell.h / 2;
+  g.append(svgEl('text', { x: cx, y: cy - 14, class: 'free-label' }, '可用'));
+  g.append(svgEl('text', { x: cx, y: cy + 14, class: 'free-num' }, fmtPrecise(free)));
+  if (selBytes) g.append(svgEl('text', { x: cx, y: cy + 36, class: 'free-after' }, `清理后 +${fmt(selBytes)}`));
+  const ratio = Math.round(free / Math.max(1, sum(live())));
+  g.onmousemove = (e) => showTip(e, '磁盘可用空间', fmt(free),
+    `磁盘共 ${fmt(state.disk.total)}。这一块不按比例画，实际约是缓存总量的 ${ratio} 倍`);
+  g.onmouseleave = hideTip;
+  return g;
+}
+
 function clip(text, width) {
   const max = Math.max(3, Math.floor((width - 16) / 12));
   return text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -278,13 +326,14 @@ function setHot(id) {
   document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach((n) => n.classList.add('hot'));
 }
 
-function showTip(e, title, size, reason) {
+// One floating tooltip for the whole window (list rows and stones).
+function showTip(e, title, size, reason, path) {
   const tip = $('tooltip');
-  const box = $('garden').getBoundingClientRect();
-  tip.replaceChildren(el('div', '', `${title} · ${size}`), el('div', 'tr', reason));
+  tip.replaceChildren(el('div', 'tt', `${title} · ${size}`), el('div', 'tr', reason));
+  if (path) tip.append(el('div', 'tp', path.replace(/^\/Users\/[^/]+/, '~')));
   tip.hidden = false;
-  const x = Math.min(e.clientX - box.left + 14, box.width - tip.offsetWidth - 8);
-  const y = Math.min(e.clientY - box.top + 14, box.height - tip.offsetHeight - 8);
+  const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  const y = e.clientY + 18 + tip.offsetHeight > window.innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 18;
   tip.style.left = `${x}px`;
   tip.style.top = `${y}px`;
 }

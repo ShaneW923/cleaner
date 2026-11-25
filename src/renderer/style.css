@@ -15,6 +15,8 @@
   --card: #26241f08;
   --card-strong: #26241f12;
   --line-strong: #26241f40;
+  --warn: #9a5b12;
+  --warn-bg: #d98a2a26;
   --accent: #26241f;
   --accent-ink: #efe9dd;
   color-scheme: light;
@@ -37,6 +39,8 @@
     --card: #ece6da08;
     --card-strong: #ece6da14;
     --line-strong: #ece6da40;
+    --warn: #e6b070;
+    --warn-bg: #e6b07022;
     --accent: #e8e2d4;
     --accent-ink: #1c1b19;
     color-scheme: dark;
@@ -112,14 +116,18 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 360px) 1fr; 
 .row img { width: 20px; height: 20px; }
 .row .name { min-width: 0; }
 .row .name .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row .name .r { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.tag { font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 4px; color: var(--muted); background: var(--line); white-space: nowrap; }
+.tag.strong { color: var(--ink); background: var(--line-strong); }
+.tag.warn { color: var(--warn); background: var(--warn-bg); }
 .row .size { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
 .badge { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; margin-left: 6px; }
 
-/* Round check, like a pebble */
-.check { appearance: none; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--muted); margin: 0; display: grid; place-items: center; }
+/* Square checkbox with a tick */
+.check { appearance: none; width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--muted); margin: 0; display: grid; place-items: center; cursor: pointer; }
+.check:hover { border-color: var(--ink); }
 .check:checked { border-color: var(--ink); background: var(--ink); }
-.check:checked::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bg); }
+.check:checked::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 
 .panel-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 22px 18px 0; border-top: 1px solid var(--line); }
 .muted { color: var(--muted); }
@@ -147,6 +155,15 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 360px) 1fr; 
 .stone .mark { fill: var(--ink); opacity: 0; }
 .stone.selected .mark { opacity: 1; }
 
+/* Free space column */
+.free-area path { fill: none; }
+.free-area path.edge { stroke: var(--line-strong); stroke-width: 1.2; }
+.free-area path.rake { stroke: var(--sand); stroke-width: 1; }
+.free-area text { text-anchor: middle; fill: var(--ink); pointer-events: none; }
+.free-area .free-label { font-size: 12px; fill: var(--muted); }
+.free-area .free-num { font-size: 26px; font-weight: 300; font-variant-numeric: tabular-nums; }
+.free-area .free-after { font-size: 11px; fill: var(--muted); }
+
 /* Raked sand where a stone was cleaned */
 .sand path { fill: none; stroke: var(--sand); stroke-width: 1; }
 .sand text { fill: var(--muted); font-size: 11px; text-anchor: middle; }
@@ -158,8 +175,10 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 360px) 1fr; 
 .stone.new { animation: settle .45s ease both; }
 @keyframes settle { from { opacity: 0; transform: scale(.94); } }
 
-.tooltip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); border-radius: 8px; padding: 7px 10px; font-size: 12px; max-width: 260px; }
-.tooltip .tr { opacity: .7; font-size: 11px; margin-top: 2px; }
+.tooltip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: var(--bg); border-radius: 8px; padding: 8px 11px; font-size: 12px; max-width: 300px; box-shadow: 0 8px 24px #0004; }
+.tooltip .tt { font-weight: 500; }
+.tooltip .tr { opacity: .8; font-size: 12px; margin-top: 3px; }
+.tooltip .tp { opacity: .55; font-size: 10px; margin-top: 4px; word-break: break-all; }
 
 /* Empty state: a stone-shaped scan button inside raked circles */
 .empty-garden { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; color: var(--muted); }

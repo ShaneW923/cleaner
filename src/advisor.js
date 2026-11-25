@@ -35,13 +35,21 @@ function isSystem(item) {
 }
 
 // item: { folder, bytes, system, appName, appRunning }
-// Returns { kind, displayName, level, reason }
+// Returns { kind, displayName, level, reason, tags }
 //   kind:  'app' | 'tool' | 'system' | 'orphan'
 //   level: 'recommend' 推荐清理 | 'ok' 可以清理 | 'keep' 不建议
+//   tags:  short keys shown as chips (see TAGS); reason is the full sentence
 function advise(item) {
+  const out = adviseBase(item);
+  if (item.partial) out.tags.push('partial');
+  return out;
+}
+
+function adviseBase(item) {
   const folder = item.folder;
   const lower = folder.toLowerCase();
   const tool = TOOLS[lower];
+  const large = item.bytes >= 100 * MB;
 
   if (tool) {
     return {
@@ -49,6 +57,7 @@ function advise(item) {
       displayName: tool,
       level: item.bytes >= MB ? 'recommend' : 'ok',
       reason: '开发工具的下载缓存，删掉后需要时会自动重新下载',
+      tags: ['tool', 'redownload', ...(large ? ['large'] : [])],
     };
   }
 
@@ -58,6 +67,7 @@ function advise(item) {
       displayName: folder.replace(/^com\.apple\./i, ''),
       level: 'keep',
       reason: 'macOS 系统组件的缓存，系统会自己管理，清理收益很小',
+      tags: ['system'],
     };
   }
 
@@ -68,6 +78,7 @@ function advise(item) {
         displayName: `${item.appName}（更新临时文件）`,
         level: item.appRunning ? 'ok' : 'recommend',
         reason: 'App 自动更新时留下的安装包，更新完成后就没用了',
+        tags: ['update', ...(item.appRunning ? ['running'] : [])],
       };
     }
     if (item.appRunning) {
@@ -76,15 +87,17 @@ function advise(item) {
         displayName: item.appName,
         level: 'ok',
         reason: 'App 正在运行，建议先退出再清理，否则它可能马上又写回来',
+        tags: ['running', 'rebuild', ...(large ? ['large'] : [])],
       };
     }
     return {
       kind: 'app',
       displayName: item.appName,
-      level: item.bytes >= 100 * MB ? 'recommend' : 'ok',
-      reason: item.bytes >= 100 * MB
+      level: large ? 'recommend' : 'ok',
+      reason: large
         ? '占用较大，App 下次打开时会自动重建，不会丢数据'
         : 'App 下次打开时会自动重建，不会丢数据',
+      tags: [...(large ? ['large'] : []), 'rebuild'],
     };
   }
 
@@ -93,6 +106,7 @@ function advise(item) {
     displayName: folder,
     level: item.bytes >= MB ? 'recommend' : 'ok',
     reason: '没有找到对应的 App，可能是已卸载 App 的残留',
+    tags: ['orphan'],
   };
 }
 

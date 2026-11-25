@@ -45,3 +45,9 @@ test('matches Codex to ChatGPT.app and LarkShell to Lark', () => {
   addApp(index, { name: 'Home', bundleId: 'com.apple.Home', path: '/System/Applications/Home.app' });
   assert.strictEqual(matchApp('Homebrew', index), null); // "brew" isn't a new word
 });
+
+test('each item gets short tags; partial access adds a tag', () => {
+  assert.deepStrictEqual(advise(item({ folder: 'pip', bytes: 400 * MB })).tags, ['tool', 'redownload', 'large']);
+  assert.deepStrictEqual(advise(item({ folder: 'Arc', appName: 'Arc', appRunning: true })).tags, ['running', 'rebuild']);
+  assert.deepStrictEqual(advise(item({ folder: 'com.x.gone', partial: true })).tags, ['orphan', 'partial']);
+});
