@@ -26,8 +26,11 @@ function sorted() {
 }
 
 function label(it) {
-  return it.appName || it.folder;
+  return it.displayName || it.appName || it.folder;
 }
+
+const LEVEL_TEXT = { recommend: '推荐清理', ok: '可以清理', keep: '不建议' };
+const KIND_TEXT = { tool: '开发工具', system: 'macOS 系统', orphan: '未找到 App' };
 
 function render() {
   const list = $('list');
@@ -53,14 +56,18 @@ function row(it) {
   const title = document.createElement('div');
   title.className = 'title';
   title.textContent = label(it);
-  if (it.system) title.append(tag('Apple 系统', 'system'));
-  else if (!it.appFound) title.append(tag('App 未找到', 'missing'));
+  title.append(tag(LEVEL_TEXT[it.level], it.level));
+  if (KIND_TEXT[it.kind]) title.append(tag(KIND_TEXT[it.kind], ''));
+  if (it.appRunning) title.append(tag('运行中', 'running'));
   if (it.partial) title.append(tag('部分无权限', ''));
+  const reason = document.createElement('div');
+  reason.className = 'reason';
+  reason.textContent = it.reason;
   const sub = document.createElement('div');
   sub.className = 'sub';
   sub.textContent = it.folder;
   sub.title = it.path;
-  name.append(title, sub);
+  name.append(title, reason, sub);
 
   const size = document.createElement('div');
   size.className = 'size';
@@ -91,7 +98,8 @@ function selectedBytes() {
 function updateFooter() {
   $('selectedInfo').textContent = `已选 ${selected.size} 项 · ${fmt(selectedBytes())}`;
   $('trashBtn').disabled = scanning || selected.size === 0;
-  const selectable = [...items.values()].filter((i) => !i.system);
+  $('selectRecommended').disabled = scanning || ![...items.values()].some((i) => i.level === 'recommend');
+  const selectable = [...items.values()].filter((i) => i.level !== 'keep');
   $('selectAll').checked = selectable.length > 0 && selectable.every((i) => selected.has(i.id));
 }
 
@@ -133,9 +141,13 @@ async function startScan() {
   $('progress').hidden = true;
   $('status').dataset.scanned = '1';
   const total = [...items.values()].reduce((s, i) => s + i.bytes, 0);
+  const rec = [...items.values()].filter((i) => i.level === 'recommend');
+  const recText = rec.length
+    ? ` · 推荐清理 ${rec.length} 项，${fmt(rec.reduce((s, i) => s + i.bytes, 0))}`
+    : '';
   if (!res.ok) $('status').textContent = `扫描出错：${res.error}`;
-  else if (res.cancelled) $('status').textContent = `已取消 · 已找到 ${items.size} 项，共 ${fmt(total)}`;
-  else $('status').textContent = `扫描完成 · ${items.size} 项，共 ${fmt(total)}`;
+  else if (res.cancelled) $('status').textContent = `已取消 · 已找到 ${items.size} 项，共 ${fmt(total)}${recText}`;
+  else $('status').textContent = `扫描完成 · ${items.size} 项，共 ${fmt(total)}${recText}`;
   render();
 }
 
@@ -144,9 +156,15 @@ $('cancelBtn').onclick = () => window.cleaner.cancelScan();
 
 $('selectAll').onchange = (e) => {
   for (const it of items.values()) {
-    if (it.system) continue; // Apple system caches are never auto-selected
+    if (it.level === 'keep') continue; // "不建议" items are never auto-selected
     e.target.checked ? selected.add(it.id) : selected.delete(it.id);
   }
+  render();
+};
+
+$('selectRecommended').onclick = () => {
+  selected.clear();
+  for (const it of items.values()) if (it.level === 'recommend') selected.add(it.id);
   render();
 };
 
@@ -159,10 +177,13 @@ document.querySelectorAll('.sort button').forEach((b) => {
 });
 
 $('trashBtn').onclick = () => {
-  const sys = [...selected].filter((id) => items.get(id)?.system).length;
+  const sel = [...selected].map((id) => items.get(id));
+  const keep = sel.filter((i) => i.level === 'keep').length;
+  const running = sel.filter((i) => i.appRunning).map(label);
   $('confirmText').textContent =
     `将 ${selected.size} 项（${fmt(selectedBytes())}）移到废纸篓。` +
-    (sys ? `其中 ${sys} 项是 Apple 系统缓存，请确认。` : '');
+    (keep ? `其中 ${keep} 项是"不建议"清理的 macOS 系统缓存。` : '') +
+    (running.length ? `${running.join('、')} 正在运行，建议先退出。` : '');
   $('confirm').showModal();
 };
 $('confirmNo').onclick = () => $('confirm').close();

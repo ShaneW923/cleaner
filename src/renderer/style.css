@@ -16,8 +16,12 @@ progress { margin: 0 16px; width: calc(100% - 32px); }
 .name .title { font-weight: 500; }
 .name .sub { color: #888; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tag { font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: 6px; background: #8883; }
-.tag.missing { background: #f5a62340; }
-.tag.system { background: #4a90e240; }
+.tag.recommend { background: #34c75940; }
+.tag.ok { background: #8883; }
+.tag.keep { background: #4a90e240; }
+.tag.running { background: #f5a62340; }
+.name .reason { color: #888; font-size: 11px; }
+.toolbar label { margin-left: 8px; }
 .size { font-variant-numeric: tabular-nums; min-width: 70px; text-align: right; }
 .reveal { font-size: 11px; }
 .empty { padding: 40px; text-align: center; color: #888; }

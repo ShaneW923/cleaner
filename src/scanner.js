@@ -4,7 +4,14 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { buildAppIndex, matchApp } = require('./apps');
+const { buildAppIndex, matchApp, runningAppPaths } = require('./apps');
+const { advise, isSystem } = require('./advisor');
+
+// Which file's Finder icon to show for each kind of row.
+const ICONS = {
+  tool: '/System/Applications/Utilities/Terminal.app',
+  system: '/System/Applications/System Settings.app',
+};
 
 const CACHES_DIR = path.join(os.homedir(), 'Library', 'Caches');
 const CONCURRENCY = 6;
@@ -39,9 +46,10 @@ function scanCaches({ onItem, onProgress }) {
   const procs = new Set();
 
   const done = (async () => {
-    const [entries, index] = await Promise.all([
+    const [entries, index, running] = await Promise.all([
       fs.readdir(CACHES_DIR, { withFileTypes: true }),
       buildAppIndex(),
+      runningAppPaths(),
     ]);
     const dirs = entries.filter((e) => e.isDirectory());
     const total = dirs.length;
@@ -57,17 +65,27 @@ function scanCaches({ onItem, onProgress }) {
         if (cancelled) return;
         finished++;
         const app = matchApp(entry.name, index);
-        const system = isAppleSystem(entry.name);
-        await onItem({
+        const base = {
           id: entry.name,
           path: full,
           folder: entry.name,
           bytes,
           partial,
-          system,
+          system: isAppleSystem(entry.name),
           appName: app ? app.name : null,
           appPath: app ? app.path : null,
-          appFound: Boolean(app) || system,
+          appRunning: Boolean(app && running.has(app.path)),
+        };
+        base.system = isSystem(base);
+        const advice = advise(base);
+        // "Running" only matters for app caches (e.g. not the Electron download cache)
+        if (advice.kind !== 'app') base.appRunning = false;
+        await onItem({
+          ...base,
+          ...advice,
+          // Finder icon source: the app itself, Terminal for tools,
+          // System Settings for macOS, else the folder's own icon.
+          iconPath: app ? app.path : ICONS[advice.kind] || full,
         });
         onProgress({ done: finished, total, current: entry.name });
       }
