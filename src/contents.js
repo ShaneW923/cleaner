@@ -61,7 +61,7 @@ async function sniff(file) {
 //   chromium,          // has Chromium web cache folders (Code Cache, Cache_Data…)
 //   urlCache,          // has a macOS URL cache (Cache.db) at the top
 // }
-async function analyzeContents(dir, { maxFiles = 150000, timeMs = 4000 } = {}) {
+async function analyzeContents(dir, { maxFiles = 150000, timeMs = 10000 } = {}) {
   const deadline = Date.now() + timeMs;
   let mediaBytes = 0, otherBytes = 0, unknownBytes = 0, files = 0;
   let installerBytes = 0, chromium = false, urlCache = false;

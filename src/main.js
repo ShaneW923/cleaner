@@ -74,6 +74,22 @@ ipcMain.handle('trash', (_e, paths) => trashCaches(paths, (p) => shell.trashItem
 
 ipcMain.handle('reveal', (_e, p) => shell.showItemInFolder(p));
 
+// Ignore list: ids of rows the user never wants to see, kept in the app's
+// own data folder (~/Library/Application Support/cleaner/ignored.json).
+const ignoredFile = () => path.join(app.getPath('userData'), 'ignored.json');
+ipcMain.handle('ignored:load', async () => {
+  try {
+    const ids = JSON.parse(await require('node:fs/promises').readFile(ignoredFile(), 'utf8'));
+    return Array.isArray(ids) ? ids.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+});
+ipcMain.handle('ignored:save', async (_e, ids) => {
+  const clean = Array.isArray(ids) ? ids.filter((x) => typeof x === 'string') : [];
+  await require('node:fs/promises').writeFile(ignoredFile(), JSON.stringify(clean, null, 2));
+});
+
 // Free / total space on the startup disk.
 ipcMain.handle('disk', async () => {
   try {

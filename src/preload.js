@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('cleaner', {
   trash: (paths) => ipcRenderer.invoke('trash', paths),
   reveal: (p) => ipcRenderer.invoke('reveal', p),
   diskSpace: () => ipcRenderer.invoke('disk'),
+  loadIgnored: () => ipcRenderer.invoke('ignored:load'),
+  saveIgnored: (ids) => ipcRenderer.invoke('ignored:save', ids),
   onItem: (fn) => ipcRenderer.on('scan:item', (_e, item) => fn(item)),
   onProgress: (fn) => ipcRenderer.on('scan:progress', (_e, p) => fn(p)),
 });

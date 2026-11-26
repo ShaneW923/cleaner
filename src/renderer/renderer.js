@@ -30,6 +30,9 @@ const TAGS = {
   network: { label: '网络缓存', tone: 'type' },
   chat: { label: '聊天缓存', tone: 'type' },
   appcache: { label: 'App 缓存', tone: 'type' },
+  toolcache: { label: '工具缓存', tone: 'type' },
+  model: { label: 'AI 模型', tone: 'type' },
+  runtime: { label: '运行环境', tone: 'type' },
   system: { label: '系统缓存', tone: 'type' },
   // warnings
   orphan: { label: '未找到 App', tone: 'warn' },
@@ -39,6 +42,8 @@ const TAGS = {
   running: { label: '运行中', tone: 'status' },
   partial: { label: '部分无权限', tone: 'status' },
 };
+
+const STATUS_TAGS = new Set(['running', 'partial']);
 
 const state = {
   items: new Map(),   // id → item (item.trashed once moved to Trash)
@@ -52,6 +57,8 @@ const state = {
   freedThisSession: 0,
   seenStones: new Set(),
   hot: null,
+  ignored: new Set(),   // item ids the user chose never to see (saved on disk)
+  showIgnored: false,
 };
 
 // ---------- formatting ----------
@@ -66,7 +73,8 @@ function split(bytes, precise = false) {
 const fmt = (b) => split(b).join(' ');
 const fmtPrecise = (b) => split(b, true).join(' ');
 const label = (it) => it.displayName || it.appName || it.folder;
-const live = () => [...state.items.values()].filter((i) => !i.trashed);
+const live = () => [...state.items.values()].filter((i) => !i.trashed && !state.ignored.has(i.id));
+const ignoredItems = () => [...state.items.values()].filter((i) => !i.trashed && state.ignored.has(i.id));
 const sum = (arr) => arr.reduce((s, i) => s + i.bytes, 0);
 
 // ---------- render: hero ----------
@@ -179,16 +187,46 @@ function renderGroups() {
     }
     box.append(g);
   }
+
+  // Ignored items: hidden everywhere else, restorable here
+  const ign = ignoredItems().sort((a, b) => b.bytes - a.bytes);
+  if (ign.length) {
+    const g = el('div', 'group ignored');
+    const head = el('div', 'group-head');
+    head.onclick = () => { state.showIgnored = !state.showIgnored; renderGroups(); };
+    const top = el('div', 'head-top');
+    top.append(el('span', 'title', '已忽略'), el('span', 'meta', `${ign.length} 项 · ${fmt(sum(ign))}`),
+      el('span', 'fold', state.showIgnored ? '收起' : '展开'));
+    const bottom = el('div', 'head-bottom');
+    bottom.append(el('span', 'desc', '不会出现在列表、石头图和统计里'));
+    head.append(top, bottom);
+    g.append(head);
+    if (state.showIgnored) {
+      const ul = el('ul', 'rows');
+      for (const it of ign) ul.append(row(it, { ignored: true }));
+      g.append(ul);
+    }
+    box.append(g);
+  }
 }
 
-function row(it) {
-  const li = el('li', 'row');
+async function setIgnored(id, on) {
+  on ? state.ignored.add(id) : state.ignored.delete(id);
+  if (on) state.selected.delete(id);
+  hideTip();
+  renderAll();
+  await window.cleaner.saveIgnored([...state.ignored]);
+}
+
+function row(it, { ignored = false } = {}) {
+  const li = el('li', ignored ? 'row is-ignored' : 'row');
   li.dataset.id = it.id;
   if (state.hot === it.id) li.classList.add('hot');
 
   const cb = el('input', 'check');
   cb.type = 'checkbox';
   cb.checked = state.selected.has(it.id);
+  cb.disabled = ignored;
   cb.onchange = () => toggle(it.id);
 
   const icon = it.icon ? Object.assign(el('img'), { src: it.icon }) : el('span');
@@ -201,11 +239,18 @@ function row(it) {
   }
   name.append(el('div', 't', label(it)), tags);
 
-  li.append(cb, icon, name, el('span', 'size', fmt(it.bytes)));
+  // Size, swapped for an ignore / restore button on hover
+  const end = el('div', 'end');
+  const act = el('button', 'row-act', ignored ? '恢复' : '忽略');
+  act.title = ignored ? '重新显示这一项' : '以后不再显示这一项';
+  act.onclick = (e) => { e.stopPropagation(); setIgnored(it.id, !ignored); };
+  end.append(el('span', 'size', fmt(it.bytes)), act);
+
+  li.append(cb, icon, name, end);
   li.onmouseenter = () => setHot(it.id);
-  li.onmousemove = (e) => showTip(e, label(it), fmt(it.bytes), it.reason, it.path);
+  li.onmousemove = (e) => showTip(e, label(it), fmt(it.bytes), it.reason, it.paths);
   li.onmouseleave = () => { setHot(null); hideTip(); };
-  li.ondblclick = () => window.cleaner.reveal(it.path);
+  li.ondblclick = () => window.cleaner.reveal(it.paths[0]);
   return li;
 }
 
@@ -215,11 +260,11 @@ function renderGarden() {
   const { width, height } = svg.getBoundingClientRect();
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.replaceChildren();
-  $('emptyGarden').hidden = state.items.size > 0;
+  $('emptyGarden').hidden = state.items.size > 0 || state.scanned;
   if (!state.items.size || width < 10) return;
 
   // Biggest folders get their own stone; the rest gather into one "其他" stone per level.
-  const all = [...state.items.values()].sort((a, b) => b.bytes - a.bytes);
+  const all = [...state.items.values()].filter((i) => !state.ignored.has(i.id)).sort((a, b) => b.bytes - a.bytes);
   const nodes = all.slice(0, MAX_STONES).map((it) => ({ value: it.bytes, it }));
   for (const lvl of LEVELS) {
     const rest = all.slice(MAX_STONES).filter((i) => i.level === lvl.key && !i.trashed);
@@ -269,7 +314,7 @@ function stone(cell, d, seed) {
     g.append(svgEl('text', { x: cx, y: cy + 4, class: 'size' }, fmt(bytes)));
   }
 
-  g.onmousemove = (e) => showTip(e, name, fmt(bytes), it ? it.reason : '较小的缓存合在一起，可以在左边列表里逐项选择');
+  g.onmousemove = (e) => showTip(e, name, fmt(bytes), it ? it.reason : '较小的缓存合在一起，可以在左边列表里逐项选择', it && it.paths);
   g.onmouseleave = () => { hideTip(); if (it) setHot(null); };
   if (it) {
     g.onmouseenter = () => setHot(it.id);
@@ -338,10 +383,13 @@ function setHot(id) {
 }
 
 // One floating tooltip for the whole window (list rows and stones).
-function showTip(e, title, size, reason, path) {
+function showTip(e, title, size, reason, paths) {
   const tip = $('tooltip');
   tip.replaceChildren(el('div', 'tt', `${title} · ${size}`), el('div', 'tr', reason));
-  if (path) tip.append(el('div', 'tp', path.replace(/^\/Users\/[^/]+/, '~')));
+  if (paths && paths.length) {
+    const short = paths.map((p) => p.replace(/^\/Users\/[^/]+/, '~'));
+    tip.append(el('div', 'tp', (paths.length > 1 ? `${paths.length} 个文件夹：\n` : '') + short.join('\n')));
+  }
   tip.hidden = false;
   const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
   const y = e.clientY + 18 + tip.offsetHeight > window.innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 18;
@@ -371,9 +419,28 @@ function queueRender() {
 }
 
 // ---------- scanning ----------
+// Folders of the same app with the same type become one row, e.g. Chrome's
+// "Google" and "com.google.Chrome" web caches. Different types stay apart
+// (ChatGPT's installer is recommended, its web cache isn't).
 window.cleaner.onItem((it) => {
   if (it.bytes === 0) return;
-  state.items.set(it.id, it);
+  const key = it.appPath ? `${it.appPath}|${it.type}` : it.path;
+  const prev = state.items.get(key);
+  if (prev) {
+    // The largest folder speaks for the row (its warnings and explanation);
+    // only status tags are combined across folders.
+    const status = new Set([...prev.tags, ...it.tags].filter((t) => STATUS_TAGS.has(t)));
+    if (it.bytes > Math.max(...Object.values(prev.pathBytes))) {
+      Object.assign(prev, { reason: it.reason, tags: it.tags.slice(), icon: it.icon || prev.icon });
+    }
+    prev.tags = [...prev.tags.filter((t) => !STATUS_TAGS.has(t)), ...status];
+    prev.bytes += it.bytes;
+    prev.paths.push(it.path);
+    prev.pathBytes[it.path] = it.bytes;
+    prev.partial = prev.partial || it.partial;
+  } else {
+    state.items.set(key, { ...it, id: key, paths: [it.path], pathBytes: { [it.path]: it.bytes } });
+  }
   queueRender();
 });
 window.cleaner.onProgress((p) => {
@@ -421,13 +488,25 @@ $('confirmNo').onclick = () => $('confirm').close();
 $('confirmYes').onclick = async () => {
   $('confirm').close();
   const targets = [...state.selected].map((id) => state.items.get(id));
-  const results = await window.cleaner.trash(targets.map((i) => i.path));
+  const jobs = targets.flatMap((it) => it.paths.map((p) => ({ it, p })));
+  const results = await window.cleaner.trash(jobs.map((j) => j.p));
   const failed = [];
   results.forEach((r, k) => {
-    const it = targets[k];
-    if (r.ok) { it.trashed = true; state.freedThisSession += it.bytes; state.selected.delete(it.id); }
-    else failed.push(`${label(it)}：${r.error}`);
+    const { it, p } = jobs[k];
+    if (r.ok) {
+      state.freedThisSession += it.pathBytes[p] || 0;
+      it.bytes -= it.pathBytes[p] || 0;
+      it.paths = it.paths.filter((x) => x !== p);
+    } else failed.push(`${label(it)}：${r.error}`);
   });
+  for (const it of targets) {
+    // Fully moved → becomes sand; partly moved → keeps what's left
+    if (!it.paths.length) {
+      it.trashed = true;
+      it.bytes = Object.values(it.pathBytes).reduce((a, b) => a + b, 0);
+      state.selected.delete(it.id);
+    }
+  }
   state.disk = (await window.cleaner.diskSpace()) || state.disk;
   renderAll();
   if (failed.length) $('summary').textContent += ` ${failed.length} 项没有移动：${failed.join('；')}`;
@@ -449,5 +528,6 @@ function svgEl(tag, attrs, text) {
 
 new ResizeObserver(() => renderGarden()).observe($('garden'));
 renderAll();
+window.cleaner.loadIgnored().then((ids) => { state.ignored = new Set(ids || []); renderAll(); });
 // Show the disk overview straight away, before any scan.
 window.cleaner.diskSpace().then((disk) => { state.disk = disk; renderAll(); });

@@ -73,6 +73,9 @@ const TYPES = {
   network:   { level: 'ok', reason: 'App 联网时缓存的数据，删了会重新获取' },
   chat:      { level: 'ok', reason: '' }, // reason decided by the content check below
   appcache:  { level: 'ok', reason: 'App 自己的缓存，下次打开时重建，第一次会慢一点' },
+  toolcache: { level: 'ok', reason: '命令行工具的缓存，删了需要时会重建' },
+  model:     { level: 'ok', reason: '下载的 AI 模型，删了下次用到要重新下载，可能很大很慢' },
+  runtime:   { level: 'ok', reason: '工具正在使用的运行环境，删了下次启动时会重新下载' },
   system:    { level: 'keep', reason: 'macOS 系统组件的缓存，系统会自己管理，清理收益很小' },
 };
 
@@ -114,6 +117,13 @@ function detectType(item) {
 function adviseBase(item) {
   const folder = item.folder;
   const tool = TOOLS[folder.toLowerCase()];
+
+  // Known locations outside ~/Library/Caches (~/.npm, ~/.nvm, ~/.cache/…)
+  if (item.preset) {
+    const out = result('tool', item.preset.type, item.preset.name);
+    if (item.preset.reason) out.reason = item.preset.reason;
+    return out;
+  }
 
   if (tool) return result('tool', BUILD_TOOLS.has(folder.toLowerCase()) ? 'build' : 'download', tool);
 
