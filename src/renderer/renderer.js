@@ -10,10 +10,14 @@ if (!window.cleaner) {
 const SVGNS = 'http://www.w3.org/2000/svg';
 const MAX_STONES = 28;
 // Only the "recommend" card offers select-all; the others are picked one by one.
+// Cards never collapse, so every ticked row stays visible. desc shows on hover.
 const LEVELS = [
-  { key: 'recommend', title: '推荐清理', desc: '安装包、下载缓存、崩溃报告这类，删了没有任何影响', open: true, selectAll: true },
-  { key: 'ok', title: '可以清理', desc: '不会丢数据，但有一点代价，看每项的标签', open: true, selectAll: false, limit: 8 },
-  { key: 'keep', title: '不建议', desc: 'macOS 系统缓存，系统会自己管理', open: false, selectAll: false, limit: 8 },
+  { key: 'recommend', title: '推荐清理', selectAll: true,
+    desc: '安装包、下载缓存、编译缓存、崩溃报告、日志，删了没有任何影响。会直接永久删除，空间马上释放' },
+  { key: 'ok', title: '可以清理', selectAll: false, limit: 8,
+    desc: '不会丢数据，但有一点代价，看每一项的标签。会移到废纸篓，可以放回' },
+  { key: 'keep', title: '不建议', selectAll: false, limit: 8,
+    desc: 'macOS 系统缓存，系统会自己管理，清理收益很小。勾选的话会移到废纸篓' },
 ];
 
 // Chips shown under each name; the full sentence (item.reason) appears on hover.
@@ -23,6 +27,7 @@ const TAGS = {
   installer: { label: '安装包', tone: 'type' },
   download: { label: '下载缓存', tone: 'type' },
   build: { label: '编译缓存', tone: 'type' },
+  oldversion: { label: '旧版本', tone: 'type' },
   crash: { label: '崩溃报告', tone: 'type' },
   log: { label: '日志', tone: 'type' },
   web: { label: '网页缓存', tone: 'type' },
@@ -46,19 +51,19 @@ const TAGS = {
 const STATUS_TAGS = new Set(['running', 'partial']);
 
 const state = {
-  items: new Map(),   // id → item (item.trashed once moved to Trash)
+  items: new Map(),   // row key → row (row.cleaned = 'deleted' | 'trashed' once done)
   selected: new Set(),
-  open: Object.fromEntries(LEVELS.map((l) => [l.key, l.open])),
   showAll: {},
   scanning: false,
   scanned: false,
   progress: { done: 0, total: 0, current: '' },
   disk: null,
-  freedThisSession: 0,
+  cleaning: false,
   seenStones: new Set(),
   hot: null,
-  ignored: new Set(),   // item ids the user chose never to see (saved on disk)
-  showIgnored: false,
+  protected: new Set(), // row keys the user protected (saved on disk)
+  protectError: null,   // protect list unreadable → cleaning is disabled
+  lastResult: null,     // summary line after cleaning
 };
 
 // ---------- formatting ----------
@@ -73,22 +78,30 @@ function split(bytes, precise = false) {
 const fmt = (b) => split(b).join(' ');
 const fmtPrecise = (b) => split(b, true).join(' ');
 const label = (it) => it.displayName || it.appName || it.folder;
-const live = () => [...state.items.values()].filter((i) => !i.trashed && !state.ignored.has(i.id));
-const ignoredItems = () => [...state.items.values()].filter((i) => !i.trashed && state.ignored.has(i.id));
+const live = () => [...state.items.values()].filter((i) => !i.cleaned && !state.protected.has(i.id));
+const protectedItems = () => [...state.items.values()].filter((i) => !i.cleaned && state.protected.has(i.id));
+const selectedItems = () => live().filter((i) => state.selected.has(i.id));
+// Recommended rows are deleted permanently (space freed now); the rest go to the Trash
+const willDelete = (i) => i.level === 'recommend';
 const sum = (arr) => arr.reduce((s, i) => s + i.bytes, 0);
 
 // ---------- render: hero ----------
 function renderHero() {
   const all = live();
   const rec = all.filter((i) => i.level === 'recommend');
-  const selBytes = sum(all.filter((i) => state.selected.has(i.id)));
+  const sel = selectedItems();
+  const freeing = sum(sel.filter(willDelete));        // freed right away
+  const toTrash = sum(sel.filter((i) => !willDelete(i))); // freed when the Trash is emptied
   const free = state.disk ? state.disk.free : null;
-  let big = null, caption, summary = '';
+  let caption = '', summary = '';
 
-  // Big number = free disk space, plus whatever is selected for cleaning.
+  // Big number is always "available space". With something selected that
+  // will be deleted: small "now →" then the big "after cleaning" figure.
+  const big = free === null ? null : free + freeing;
+  $('bigFrom').textContent = freeing ? `${fmtPrecise(free)} →` : '';
   if (free !== null) {
-    big = free + selBytes;
-    caption = selBytes ? `清理所选后可用（现在 ${fmtPrecise(free)}，多出 ${fmt(selBytes)}）` : '磁盘可用空间';
+    caption = freeing ? '清理后可用' : '可用空间';
+    if (toTrash) caption += ` · 另有 ${fmt(toTrash)} 移到废纸篓`;
   }
 
   if (state.scanning) {
@@ -96,50 +109,46 @@ function renderHero() {
     caption = total ? `正在扫描 ${done}/${total} · ${current}` : '正在准备…';
   } else if (!state.scanned) {
     if (free === null) caption = '扫描缓存，看看哪些能放心清理';
+  } else if (state.lastResult) {
+    summary = state.lastResult;
   } else {
-    summary = state.freedThisSession
-      ? `已释放 ${fmt(state.freedThisSession)}，在废纸篓里，清空后才真正腾出空间。`
-      : rec.length
-        ? `可以清理 ${fmt(sum(all.filter((i) => i.level !== 'keep')))}，其中 ${fmt(sum(rec))} 可以放心删除。`
-        : '没有推荐清理的内容。';
+    summary = rec.length
+      ? `可以清理 ${fmt(sum(all.filter((i) => i.level !== 'keep')))}，其中 ${fmt(sum(rec))} 可以放心删除。`
+      : '没有推荐清理的内容。';
   }
+  if (state.protectError) summary = `${state.protectError}。为了安全，暂时不能清理。`;
 
   document.querySelector('.big').hidden = big === null;
-  if (big === null) { $('bigNum').textContent = ''; $('bigUnit').textContent = ''; }
-  else { const [n, u] = split(big, true); $('bigNum').textContent = n; $('bigUnit').textContent = u; }
+  if (big !== null) { const [n, u] = split(big, true); $('bigNum').textContent = n; $('bigUnit').textContent = u; }
   $('bigCaption').textContent = caption;
   $('summary').textContent = summary;
   $('progressLine').hidden = !state.scanning;
   const { done, total } = state.progress;
   $('progressBar').style.width = total ? `${(done / total) * 100}%` : '0';
-  renderDisk(sum(all), selBytes);
+  renderDisk(sum(all), sum(sel));
 }
 
+// One bar + one short line; each segment's figure shows on hover.
 function renderDisk(cacheBytes, selBytes) {
   const d = state.disk;
   $('disk').hidden = !d;
   if (!d) return;
   const used = d.total - d.free;
   const parts = {
-    Used: Math.max(0, used - cacheBytes),
-    Cache: cacheBytes - selBytes,
-    Sel: selBytes,
-    Free: d.free,
+    Used: [Math.max(0, used - cacheBytes), cacheBytes ? '其他占用' : '已用'],
+    Cache: [cacheBytes - selBytes, '缓存'],
+    Sel: [selBytes, '已选'],
+    Free: [d.free, '可用'],
   };
-  for (const [k, v] of Object.entries(parts)) {
-    const pct = (v / d.total) * 100;
+  for (const [k, [v, name]] of Object.entries(parts)) {
+    const seg = $('seg' + k);
     // Keep tiny-but-nonzero segments visible as a sliver
-    $('seg' + k).style.width = v > 0 ? `max(3px, ${pct}%)` : '0';
-    $('seg' + k).dataset.w = v > 0 ? '1' : '0';
+    seg.style.width = v > 0 ? `max(3px, ${(v / d.total) * 100}%)` : '0';
+    seg.dataset.w = v > 0 ? '1' : '0';
+    seg.onmousemove = (e) => showTip(e, name, k === 'Free' ? fmtPrecise(v) : fmt(v), `占磁盘的 ${((v / d.total) * 100).toFixed(1)}%`);
+    seg.onmouseleave = hideTip;
   }
-  $('lgUsed').textContent = fmt(parts.Used);
-  $('lgUsedName').textContent = cacheBytes ? '其他占用' : '已用';
-  $('lgCache').textContent = fmt(cacheBytes);
-  $('lgCacheWrap').hidden = !cacheBytes;
-  $('lgSel').textContent = fmt(selBytes);
-  $('lgSelWrap').hidden = !selBytes;
-  $('lgFree').textContent = fmtPrecise(d.free);
-  $('diskTotal').textContent = `磁盘共 ${fmt(d.total)}，已用 ${fmt(used)}（${Math.round((used / d.total) * 100)}%）`;
+  $('diskTotal').textContent = `共 ${fmt(d.total)} · 已用 ${Math.round((used / d.total) * 100)}%`;
 }
 
 // ---------- render: grouped list ----------
@@ -149,84 +158,84 @@ function renderGroups() {
   for (const lvl of LEVELS) {
     const list = live().filter((i) => i.level === lvl.key).sort((a, b) => b.bytes - a.bytes);
     if (!list.length) continue;
-    const sel = list.filter((i) => state.selected.has(i.id));
+    const nSel = list.filter((i) => state.selected.has(i.id)).length;
 
     const g = el('div', `group ${lvl.key}`);
     const head = el('div', 'group-head');
-    head.onclick = () => { state.open[lvl.key] = !state.open[lvl.key]; renderGroups(); };
-    const top = el('div', 'head-top');
-    top.append(el('span', `dot ${lvl.key}`), el('span', 'title', lvl.title));
-    top.append(el('span', 'meta', sel.length ? `已选 ${fmt(sum(sel))} / ${fmt(sum(list))}` : `${list.length} 项 · ${fmt(sum(list))}`));
-    top.append(el('span', 'fold', state.open[lvl.key] ? '收起' : '展开'));
-    const bottom = el('div', 'head-bottom');
-    bottom.append(el('span', 'desc', lvl.desc));
     if (lvl.selectAll) {
-      const allOn = sel.length === list.length;
-      const t = el('button', 'pill', allOn ? '取消全选' : '全选这组');
-      t.onclick = (e) => {
-        e.stopPropagation();
-        list.forEach((i) => (allOn ? state.selected.delete(i.id) : state.selected.add(i.id)));
+      // Tri-state: all ☑ / some ⊟ / none ☐ — clicking selects or clears the group
+      const all = el('input', 'check');
+      all.type = 'checkbox';
+      all.checked = nSel === list.length;
+      all.indeterminate = nSel > 0 && nSel < list.length;
+      all.title = '全选这组';
+      all.onchange = () => {
+        const on = nSel < list.length;
+        list.forEach((i) => (on ? state.selected.add(i.id) : state.selected.delete(i.id)));
         renderAll();
       };
-      bottom.append(t);
+      head.append(all);
+    } else {
+      head.append(el('span', `dot ${lvl.key}`));
     }
-    head.append(top, bottom);
+    const info = el('span', 'info', 'ⓘ');
+    info.onmousemove = (e) => showTip(e, lvl.title, `${list.length} 项`, lvl.desc);
+    info.onmouseleave = hideTip;
+    head.append(el('span', 'title', lvl.title), info, el('span', 'meta', fmt(sum(list))));
     g.append(head);
 
-    if (state.open[lvl.key]) {
-      // Long groups show their biggest few until expanded, so cards stay readable.
-      const limit = lvl.limit && !state.showAll[lvl.key] ? lvl.limit : Infinity;
-      const ul = el('ul', 'rows');
-      for (const it of list.slice(0, limit)) ul.append(row(it));
-      g.append(ul);
-      if (list.length > limit) {
-        const more = el('button', 'more', `显示其余 ${list.length - limit} 项 · ${fmt(sum(list.slice(limit)))}`);
-        more.onclick = () => { state.showAll[lvl.key] = true; renderGroups(); };
-        g.append(more);
-      }
+    // Long groups show their biggest few; "显示其余" only ever expands
+    const limit = lvl.limit && !state.showAll[lvl.key] ? lvl.limit : Infinity;
+    const ul = el('ul', 'rows');
+    for (const it of list.slice(0, limit)) ul.append(row(it));
+    g.append(ul);
+    if (list.length > limit) {
+      const more = el('button', 'more', `显示其余 ${list.length - limit} 项 · ${fmt(sum(list.slice(limit)))}`);
+      more.onclick = () => { state.showAll[lvl.key] = true; renderGroups(); };
+      g.append(more);
     }
     box.append(g);
   }
 
-  // Ignored items: hidden everywhere else, restorable here
-  const ign = ignoredItems().sort((a, b) => b.bytes - a.bytes);
-  if (ign.length) {
-    const g = el('div', 'group ignored');
+  // Protected rows: never cleaned, left out of the map and totals
+  const prot = protectedItems().sort((a, b) => b.bytes - a.bytes);
+  if (prot.length) {
+    const g = el('div', 'group protected');
     const head = el('div', 'group-head');
-    head.onclick = () => { state.showIgnored = !state.showIgnored; renderGroups(); };
-    const top = el('div', 'head-top');
-    top.append(el('span', 'title', '已忽略'), el('span', 'meta', `${ign.length} 项 · ${fmt(sum(ign))}`),
-      el('span', 'fold', state.showIgnored ? '收起' : '展开'));
-    const bottom = el('div', 'head-bottom');
-    bottom.append(el('span', 'desc', '不会出现在列表、石头图和统计里'));
-    head.append(top, bottom);
+    const info = el('span', 'info', 'ⓘ');
+    info.onmousemove = (e) => showTip(e, '已保护', `${prot.length} 项`, '保护的项目永远不会被清理，也不会出现在石头图和统计里');
+    info.onmouseleave = hideTip;
+    head.append(el('span', 'dot protected'), el('span', 'title', '已保护'), info, el('span', 'meta', fmt(sum(prot))));
     g.append(head);
-    if (state.showIgnored) {
-      const ul = el('ul', 'rows');
-      for (const it of ign) ul.append(row(it, { ignored: true }));
-      g.append(ul);
-    }
+    const ul = el('ul', 'rows');
+    for (const it of prot) ul.append(row(it, { isProtected: true }));
+    g.append(ul);
     box.append(g);
   }
 }
 
-async function setIgnored(id, on) {
-  on ? state.ignored.add(id) : state.ignored.delete(id);
+async function setProtected(id, on) {
+  on ? state.protected.add(id) : state.protected.delete(id);
   if (on) state.selected.delete(id);
   hideTip();
   renderAll();
-  await window.cleaner.saveIgnored([...state.ignored]);
+  try {
+    await window.cleaner.saveProtected([...state.protected]);
+  } catch (e) {
+    state.protectError = '保护名单保存失败';
+    renderAll();
+  }
 }
 
-function row(it, { ignored = false } = {}) {
-  const li = el('li', ignored ? 'row is-ignored' : 'row');
+function row(it, { isProtected = false } = {}) {
+  const li = el('li', isProtected ? 'row is-protected' : 'row');
   li.dataset.id = it.id;
   if (state.hot === it.id) li.classList.add('hot');
 
   const cb = el('input', 'check');
   cb.type = 'checkbox';
   cb.checked = state.selected.has(it.id);
-  cb.disabled = ignored;
+  cb.disabled = isProtected;
   cb.onchange = () => toggle(it.id);
 
   const icon = it.icon ? Object.assign(el('img'), { src: it.icon }) : el('span');
@@ -239,11 +248,11 @@ function row(it, { ignored = false } = {}) {
   }
   name.append(el('div', 't', label(it)), tags);
 
-  // Size, swapped for an ignore / restore button on hover
+  // Size, swapped for a protect / unprotect button on hover
   const end = el('div', 'end');
-  const act = el('button', 'row-act', ignored ? '恢复' : '忽略');
-  act.title = ignored ? '重新显示这一项' : '以后不再显示这一项';
-  act.onclick = (e) => { e.stopPropagation(); setIgnored(it.id, !ignored); };
+  const act = el('button', 'row-act', isProtected ? '取消保护' : '保护');
+  act.title = isProtected ? '重新出现在列表里，可以清理' : '永远不清理这一项，也不再显示';
+  act.onclick = (e) => { e.stopPropagation(); setProtected(it.id, !isProtected); };
   end.append(el('span', 'size', fmt(it.bytes)), act);
 
   li.append(cb, icon, name, end);
@@ -264,10 +273,10 @@ function renderGarden() {
   if (!state.items.size || width < 10) return;
 
   // Biggest folders get their own stone; the rest gather into one "其他" stone per level.
-  const all = [...state.items.values()].filter((i) => !state.ignored.has(i.id)).sort((a, b) => b.bytes - a.bytes);
+  const all = [...state.items.values()].filter((i) => !state.protected.has(i.id)).sort((a, b) => b.bytes - a.bytes);
   const nodes = all.slice(0, MAX_STONES).map((it) => ({ value: it.bytes, it }));
   for (const lvl of LEVELS) {
-    const rest = all.slice(MAX_STONES).filter((i) => i.level === lvl.key && !i.trashed);
+    const rest = all.slice(MAX_STONES).filter((i) => i.level === lvl.key && !i.cleaned);
     if (rest.length) nodes.push({ value: sum(rest), other: { level: lvl.key, count: rest.length, bytes: sum(rest) } });
   }
   nodes.sort((a, b) => b.value - a.value);
@@ -285,7 +294,7 @@ function renderGarden() {
     const seed = cell.it ? cell.it.id : 'other-' + cell.other.level;
     const d = window.Stones.stonePath(cell, 5, seed);
     if (!d) continue;
-    if (cell.it && cell.it.trashed) svg.append(sand(cell, seed));
+    if (cell.it && cell.it.cleaned) svg.append(sand(cell, seed));
     else svg.append(stone(cell, d, seed));
   }
 }
@@ -336,7 +345,8 @@ function sand(cell, seed) {
   }
   g.append(inner);
   if (cell.w > 70 && cell.h > 30) {
-    g.append(svgEl('text', { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 + 4 }, `已释放 ${fmt(cell.it.bytes)}`));
+    const verb = cell.it.cleaned === 'trashed' ? '已移到废纸篓' : '已释放';
+    g.append(svgEl('text', { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 + 4 }, `${verb} ${fmt(cell.it.bytes)}`));
   }
   return g;
 }
@@ -344,7 +354,7 @@ function sand(cell, seed) {
 // Free disk space: raked sand around an empty centre, with the figure in it.
 function freeArea(cell) {
   const free = state.disk.free;
-  const selBytes = sum(live().filter((i) => state.selected.has(i.id)));
+  const selBytes = sum(selectedItems().filter(willDelete));
   const g = svgEl('g', { class: 'free-area' });
   const seed = 'free-space';
   const steps = 7;
@@ -399,9 +409,9 @@ function showTip(e, title, size, reason, paths) {
 function hideTip() { $('tooltip').hidden = true; }
 
 function renderFooter() {
-  const sel = [...state.selected].map((id) => state.items.get(id)).filter(Boolean);
+  const sel = selectedItems();
   $('selectedInfo').textContent = sel.length ? `已选 ${sel.length} 项 · ${fmt(sum(sel))}` : '未选择';
-  $('trashBtn').disabled = state.scanning || !sel.length;
+  $('cleanBtn').disabled = state.scanning || state.cleaning || !sel.length || Boolean(state.protectError);
 }
 
 function renderAll() {
@@ -424,7 +434,7 @@ function queueRender() {
 // (ChatGPT's installer is recommended, its web cache isn't).
 window.cleaner.onItem((it) => {
   if (it.bytes === 0) return;
-  const key = it.appPath ? `${it.appPath}|${it.type}` : it.path;
+  const key = it.groupKey;
   const prev = state.items.get(key);
   if (prev) {
     // The largest folder speaks for the row (its warnings and explanation);
@@ -450,7 +460,7 @@ window.cleaner.onProgress((p) => {
 });
 
 async function startScan() {
-  Object.assign(state, { scanning: true, freedThisSession: 0, progress: { done: 0, total: 0, current: '' } });
+  Object.assign(state, { scanning: true, lastResult: null, progress: { done: 0, total: 0, current: '' } });
   state.items.clear();
   state.selected.clear();
   state.seenStones.clear();
@@ -472,44 +482,73 @@ $('scanBtn').onclick = startScan;
 $('bigScanBtn').onclick = startScan;
 $('cancelBtn').onclick = () => window.cleaner.cancelScan();
 
-// ---------- trash ----------
-$('trashBtn').onclick = () => {
-  const sel = [...state.selected].map((id) => state.items.get(id));
-  const keep = sel.filter((i) => i.level === 'keep').length;
+// ---------- clean ----------
+$('cleanBtn').onclick = () => {
+  const sel = selectedItems();
+  const del = sel.filter(willDelete), tr = sel.filter((i) => !willDelete(i));
   const running = sel.filter((i) => i.appRunning).map(label);
-  $('confirmTitle').textContent = `把 ${sel.length} 项（${fmt(sum(sel))}）移到废纸篓？`;
-  $('confirmText').textContent =
-    [keep ? `其中 ${keep} 项是不建议清理的 macOS 系统缓存。` : '',
-     running.length ? `${running.join('、')} 正在运行，建议先退出。` : '']
-      .join(' ').trim() || '这些都是缓存，App 需要时会自己重建。';
+  $('confirmTitle').textContent = `清理 ${sel.length} 项？`;
+  const lines = [];
+  if (del.length) lines.push(['永久删除', `${del.length} 项 · ${fmt(sum(del))}`, '空间马上释放']);
+  if (tr.length) lines.push(['移到废纸篓', `${tr.length} 项 · ${fmt(sum(tr))}`, '可以从废纸篓放回']);
+  $('confirmList').replaceChildren(...lines.map(([a, b, c]) => {
+    const li = el('li');
+    li.append(el('b', '', a), el('span', '', b), el('span', 'muted', c));
+    return li;
+  }));
+  $('confirmNote').textContent = running.length
+    ? `${running.join('、')} 正在运行，会被跳过。想清理的话，先退出它们再重新扫描。` : '';
+  $('confirmNote').hidden = !running.length;
   $('confirm').showModal();
 };
 $('confirmNo').onclick = () => $('confirm').close();
 $('confirmYes').onclick = async () => {
   $('confirm').close();
-  const targets = [...state.selected].map((id) => state.items.get(id));
-  const jobs = targets.flatMap((it) => it.paths.map((p) => ({ it, p })));
-  const results = await window.cleaner.trash(jobs.map((j) => j.p));
-  const failed = [];
-  results.forEach((r, k) => {
-    const { it, p } = jobs[k];
-    if (r.ok) {
-      state.freedThisSession += it.pathBytes[p] || 0;
-      it.bytes -= it.pathBytes[p] || 0;
-      it.paths = it.paths.filter((x) => x !== p);
-    } else failed.push(`${label(it)}：${r.error}`);
-  });
-  for (const it of targets) {
-    // Fully moved → becomes sand; partly moved → keeps what's left
-    if (!it.paths.length) {
-      it.trashed = true;
-      it.bytes = Object.values(it.pathBytes).reduce((a, b) => a + b, 0);
-      state.selected.delete(it.id);
+  const targets = selectedItems();
+  state.cleaning = true;
+  renderFooter();
+  $('summary').textContent = '正在清理…';
+  let res;
+  try {
+    res = await window.cleaner.clean(targets.map((i) => i.id));
+  } catch (e) {
+    state.cleaning = false;
+    state.lastResult = `清理出错：${e.message}`;
+    renderAll();
+    return;
+  }
+
+  let deleted = 0, trashed = 0;
+  const skipped = [];
+  for (const r of res.results) {
+    const it = state.items.get(r.groupKey);
+    if (!it) continue;
+    if (r.action === 'deleted' || r.action === 'command') deleted += r.bytes;
+    if (r.action === 'trashed') trashed += r.bytes;
+    if (['deleted', 'trashed', 'command'].includes(r.action)) {
+      it.paths = it.paths.filter((p) => p !== r.path);
+      it.cleanedAs = r.action === 'trashed' ? 'trashed' : 'deleted';
+    } else {
+      skipped.push(`${label(it)}（${r.reason}）`);
     }
   }
-  state.disk = (await window.cleaner.diskSpace()) || state.disk;
+  for (const it of targets) {
+    // Every folder done → the stone turns to sand; partly done → keeps the rest
+    if (!it.paths.length) { it.cleaned = it.cleanedAs; state.selected.delete(it.id); }
+    else it.bytes = it.paths.reduce((s2, p) => s2 + (it.pathBytes[p] || 0), 0);
+  }
+
+  const parts = [];
+  // Measured free-space change, unless something else wrote to disk meanwhile
+  // and made the measurement clearly too small — then report what we deleted.
+  const measuredOk = res.freedMeasured != null && res.freedMeasured >= deleted * 0.5;
+  if (deleted) parts.push(measuredOk ? `已释放 ${fmt(res.freedMeasured)}（实测）` : `已删除 ${fmt(deleted)}`);
+  if (trashed) parts.push(`${fmt(trashed)} 移到了废纸篓，清空废纸篓后才释放`);
+  if (skipped.length) parts.push(`跳过 ${[...new Set(skipped)].length} 项：${[...new Set(skipped)].join('、')}`);
+  state.lastResult = (parts.join('。') || '没有清理任何内容') + '。';
+  state.disk = res.disk || state.disk;
+  state.cleaning = false;
   renderAll();
-  if (failed.length) $('summary').textContent += ` ${failed.length} 项没有移动：${failed.join('；')}`;
 };
 
 // ---------- helpers ----------
@@ -528,6 +567,11 @@ function svgEl(tag, attrs, text) {
 
 new ResizeObserver(() => renderGarden()).observe($('garden'));
 renderAll();
-window.cleaner.loadIgnored().then((ids) => { state.ignored = new Set(ids || []); renderAll(); });
+// Protect list: if it can't be read, cleaning stays disabled (fails closed)
+window.cleaner.loadProtected().then((r) => {
+  state.protected = new Set(r.ids || []);
+  state.protectError = r.ok ? null : r.error;
+  renderAll();
+});
 // Show the disk overview straight away, before any scan.
 window.cleaner.diskSpace().then((disk) => { state.disk = disk; renderAll(); });

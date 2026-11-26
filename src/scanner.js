@@ -6,7 +6,8 @@ const { spawn } = require('node:child_process');
 const { buildAppIndex, matchApp, runningAppPaths } = require('./apps');
 const { advise, isSystem, TOOLS } = require('./advisor');
 const { analyzeContents } = require('./contents');
-const { CACHES_DIR, CHILD_ROOTS, EXTRA_TARGETS, presetFor, isAllowedTarget } = require('./locations');
+const { CACHES_DIR, LOGS_DIR, OWN_LOG_DIR, CHILD_ROOTS, EXTRA_TARGETS, presetFor, isAllowedTarget } = require('./locations');
+const homebrew = require('./homebrew');
 
 const CONTENT_MIN_BYTES = 20 * 1000 * 1000;
 
@@ -48,7 +49,10 @@ async function listTargets() {
     let entries = [];
     try { entries = await fs.readdir(root, { withFileTypes: true }); } catch {}
     for (const e of entries) {
-      if (e.isDirectory()) targets.push({ full: path.join(root, e.name), folder: e.name, root });
+      const full = path.join(root, e.name);
+      if (full === OWN_LOG_DIR) continue;
+      // Logs: loose .log files count too; elsewhere only folders
+      if (e.isDirectory() || (root === LOGS_DIR && e.isFile())) targets.push({ full, folder: e.name, root });
     }
   }
   for (const t of EXTRA_TARGETS) {
@@ -68,11 +72,14 @@ function scanCaches({ onItem, onProgress }) {
   const procs = new Set();
 
   const done = (async () => {
-    const [dirs, index, running] = await Promise.all([
+    const [dirs, index, running, brewEstimate] = await Promise.all([
       listTargets(),
       buildAppIndex(),
       runningAppPaths(),
+      homebrew.estimate().catch(() => ({ bytes: 0 })),
     ]);
+    // Unreadable process table → treat every app as possibly running
+    const isRunning = (appPath) => (running ? running.has(appPath) : true);
     const total = dirs.length;
     let next = 0;
     let finished = 0;
@@ -86,8 +93,9 @@ function scanCaches({ onItem, onProgress }) {
         if (cancelled) return;
         // Outside ~/Library/Caches it's a known tool location, never an app's
         const preset = presetFor(full);
-        const isTool = Boolean(preset || TOOLS[entry.folder.toLowerCase()]);
-        const app = isTool || entry.root !== CACHES_DIR ? null : matchApp(entry.folder, index);
+        const isTool = Boolean((preset && !preset.appMatch) || TOOLS[entry.folder.toLowerCase()]);
+        const canMatch = entry.root === CACHES_DIR || (preset && preset.appMatch);
+        const app = isTool || !canMatch ? null : matchApp(entry.folder.replace(/\.log$/i, ''), index);
         const base = {
           id: full,
           path: full,
@@ -99,7 +107,7 @@ function scanCaches({ onItem, onProgress }) {
           appName: app ? app.name : null,
           appBundleId: app ? app.bundleId : null,
           appPath: app ? app.path : null,
-          appRunning: Boolean(app && running.has(app.path)),
+          appRunning: Boolean(app && isRunning(app.path)),
         };
         base.system = entry.root === CACHES_DIR && isSystem(base);
         try { base.mtimeMs = (await fs.stat(full)).mtimeMs; } catch {}
@@ -116,6 +124,9 @@ function scanCaches({ onItem, onProgress }) {
         await onItem({
           ...base,
           ...advice,
+          // Rows merge by this key (same app + same type), and the protect
+          // list stores it, so it must stay stable between scans.
+          groupKey: base.appPath ? `${base.appPath}|${advice.type}` : full,
           // Finder icon source: the app itself, Terminal for tools,
           // System Settings for macOS, else the folder's own icon.
           iconPath: app ? app.path : ICONS[advice.kind] || full,
@@ -125,6 +136,13 @@ function scanCaches({ onItem, onProgress }) {
     }
 
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+    // Homebrew old versions: measured by `brew cleanup -n`, cleaned by Homebrew
+    if (!cancelled && brewEstimate.bytes > 0) {
+      const base = { id: 'cmd:homebrew', path: homebrew.cellarPath(), folder: 'Homebrew 旧版本', bytes: brewEstimate.bytes,
+        command: 'homebrew', preset: { name: 'Homebrew 旧版本', type: 'oldversion' } };
+      await onItem({ ...base, ...advise(base), groupKey: 'cmd:homebrew', iconPath: ICONS.tool });
+    }
     return { cancelled, total };
   })();
 
@@ -137,33 +155,18 @@ function scanCaches({ onItem, onProgress }) {
   };
 }
 
-// Only allow trashing a direct child of ~/Library/Caches or ~/.cache, or one
+// Only allow cleaning a direct child of ~/Library/Caches or ~/.cache, or one
 // of the fixed extra cache folders (see locations.js). Anything else — the
 // roots themselves, deeper paths, paths escaping via "..", or symlinks
 // pointing elsewhere — is refused.
 async function assertSafeCacheTarget(target) {
   const resolved = path.resolve(target);
   if (!isAllowedTarget(resolved)) {
-    throw new Error(`拒绝：不在允许清理的缓存位置 (${target})`);
+    throw new Error(`拒绝：不在允许清理的位置 (${target})`);
   }
   const stat = await fs.lstat(resolved);
   if (stat.isSymbolicLink()) throw new Error(`拒绝：这是一个替身/符号链接 (${target})`);
   return resolved;
 }
 
-// trashFn is Electron's shell.trashItem (moves to Trash, never deletes).
-async function trashCaches(paths, trashFn) {
-  const results = [];
-  for (const p of paths) {
-    try {
-      const safe = await assertSafeCacheTarget(p);
-      await trashFn(safe);
-      results.push({ path: p, ok: true });
-    } catch (e) {
-      results.push({ path: p, ok: false, error: e.message });
-    }
-  }
-  return results;
-}
-
-module.exports = { CACHES_DIR, scanCaches, trashCaches, assertSafeCacheTarget };
+module.exports = { CACHES_DIR, scanCaches, assertSafeCacheTarget, folderSize };

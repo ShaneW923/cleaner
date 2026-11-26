@@ -18,17 +18,11 @@
   <main>
     <aside class="panel">
       <section class="hero">
-        <div class="big"><span id="bigNum">—</span><span id="bigUnit" class="unit"></span></div>
+        <div class="big"><span id="bigFrom" class="from"></span><span id="bigNum"></span><span id="bigUnit" class="unit"></span></div>
         <div id="bigCaption" class="caption">扫描缓存，看看哪些能放心清理</div>
         <div id="disk" class="disk" hidden>
           <div class="diskbar">
             <span id="segUsed" class="seg used"></span><span id="segCache" class="seg cache"></span><span id="segSel" class="seg sel"></span><span id="segFree" class="seg free"></span>
-          </div>
-          <div class="legend">
-            <span><i class="used"></i><span id="lgUsedName">已用</span> <b id="lgUsed"></b></span>
-            <span id="lgCacheWrap"><i class="cache"></i>缓存 <b id="lgCache"></b></span>
-            <span id="lgSelWrap"><i class="sel"></i>已选 <b id="lgSel"></b></span>
-            <span><i class="free"></i>可用 <b id="lgFree"></b></span>
           </div>
           <div id="diskTotal" class="disk-total"></div>
         </div>
@@ -40,7 +34,7 @@
 
       <footer class="panel-foot">
         <span id="selectedInfo" class="muted">未选择</span>
-        <button id="trashBtn" class="primary" disabled>移到废纸篓</button>
+        <button id="cleanBtn" class="primary" disabled>清理</button>
       </footer>
     </aside>
 
@@ -52,7 +46,7 @@
           <circle cx="120" cy="120" r="80" />
         </svg>
         <button id="bigScanBtn" class="big-scan">开始扫描</button>
-        <p>只看 ~/Library/Caches，扫描不会删除任何东西</p>
+        <p>扫描缓存、日志和开发工具缓存，扫描不会删除任何东西</p>
       </div>
     </section>
   </main>
@@ -61,11 +55,11 @@
 
   <dialog id="confirm">
     <h2 id="confirmTitle"></h2>
-    <p id="confirmText"></p>
-    <p class="muted">都会放进废纸篓，随时可以放回原处。</p>
+    <ul id="confirmList" class="confirm-list"></ul>
+    <p id="confirmNote" class="confirm-note" hidden></p>
     <div class="dialog-actions">
       <button id="confirmNo" class="ghost">取消</button>
-      <button id="confirmYes" class="primary">移到废纸篓</button>
+      <button id="confirmYes" class="primary">清理</button>
     </div>
   </dialog>
 

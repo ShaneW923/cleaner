@@ -77,9 +77,18 @@ function matchApp(folderName, index) {
   return null;
 }
 
-// Paths of .app bundles that currently have a running process.
-async function runningAppPaths() {
-  const out = await run('ps', ['-axo', 'comm=']);
+// Paths of .app bundles that currently have a running process, or null if
+// the process table couldn't be read — callers must treat null as "maybe
+// running" (an unreadable table is never read as idle).
+function runningAppPaths() {
+  return new Promise((resolve) => {
+    execFile('ps', ['-axo', 'comm='], { maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      resolve(err || !stdout ? null : parseRunning(stdout));
+    });
+  });
+}
+
+function parseRunning(out) {
   const running = new Set();
   for (const line of out.split('\n')) {
     const m = line.match(/^(.*?\.app)\/Contents\//);
@@ -88,4 +97,4 @@ async function runningAppPaths() {
   return running;
 }
 
-module.exports = { buildAppIndex, matchApp, addApp, runningAppPaths };
+module.exports = { buildAppIndex, matchApp, addApp, runningAppPaths, parseRunning };

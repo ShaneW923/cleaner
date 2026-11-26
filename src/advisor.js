@@ -67,6 +67,7 @@ const TYPES = {
   download:  { level: 'recommend', reason: '开发工具下载的安装包和依赖，下次用到时自动重新下载' },
   build:     { level: 'recommend', reason: '编译时生成的中间文件，下次编译时重新生成' },
   crash:     { level: 'recommend', reason: 'App 崩溃时留下的报告，删了没影响' },
+  oldversion:{ level: 'recommend', reason: 'Homebrew 升级后留下的旧版本和过期下载。由 Homebrew 自带的清理命令删除，正在用的版本不受影响' },
   log:       { level: 'recommend', reason: '运行日志，删了没影响' },
   web:       { level: 'ok', reason: '网页、图片和脚本的缓存，删了页面要重新加载，第一次打开会慢一点' },
   image:     { level: 'ok', reason: '缩略图、封面这类图片缓存，删了会重新下载' },
@@ -120,7 +121,7 @@ function adviseBase(item) {
 
   // Known locations outside ~/Library/Caches (~/.npm, ~/.nvm, ~/.cache/…)
   if (item.preset) {
-    const out = result('tool', item.preset.type, item.preset.name);
+    const out = result(item.appName ? 'app' : 'tool', item.preset.type, item.appName || item.preset.name);
     if (item.preset.reason) out.reason = item.preset.reason;
     return out;
   }
